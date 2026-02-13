@@ -492,8 +492,8 @@ class SimpleAI:
 
 def main():
     parser = argparse.ArgumentParser(description="Simple AI Agent")
-    parser.add_argument("--base_url", type=str, required=True, help="Base URL for the LLM API")
-    parser.add_argument("--model", type=str, required=True, help="Model name")
+    parser.add_argument("--base_url", type=str, required=False, default="http://localhost:8000", help="Base URL for the LLM API")
+    parser.add_argument("--model", type=str, required=False, default="gpt-3.5-turbo", help="Model name")
     parser.add_argument("--temperature", type=float, default=0.7, help="Temperature for the model")
     parser.add_argument("--max_tokens", type=int, default=100, help="Max tokens for the model response")
 
