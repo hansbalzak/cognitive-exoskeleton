@@ -267,14 +267,14 @@ class SimpleAI:
         headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
 
         messages: List[Dict[str, str]] = [
-            {"role": "system", "content": "Summarize the following conversation."},
+            {"role": "system", "content": "Summarize the following conversation into a compact summary with the following sections:\n\n1. User goals\n2. Important decisions\n3. Open tasks/questions\n4. Stable user prefs\n\nEnsure the summary stays under ~800 characters."},
             {"role": "user", "content": json.dumps(self.conversation)}
         ]
 
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.temperature,
+            "temperature": 0.0,
             "max_tokens": 200,
             "stream": False,
         }
