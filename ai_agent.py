@@ -141,6 +141,21 @@ class SimpleAI:
 
         return assistant_message
 
+    def create_plan(self, user_text: str):
+        self.plan = self.chat(user_text).split("\n")
+        self.plan_index = 0
+
+    def execute_step(self):
+        if self.plan_index < len(self.plan):
+            step = self.plan[self.plan_index]
+            self.plan_index += 1
+            return step
+        return None
+
+    def check_result(self, result):
+        # Placeholder for result checking and loop detection
+        return result != "loop detected"
+
     def clear_conversation(self):
         self.conversation = []
         self.save_conversation()
@@ -241,6 +256,23 @@ def main():
             ai.show_profile()
             continue
 
+        if cmd.startswith("/plan "):
+            plan_text = user_input.split(" ", 1)[1].strip()
+            ai.create_plan(plan_text)
+            continue
+
+        if cmd == "/execute":
+            step = ai.execute_step()
+            if step:
+                print(f"AI: Executing step: {step}")
+                result = ai.chat(step)
+                if not ai.check_result(result):
+                    print("AI: Loop detected, stopping.")
+                    break
+                print(f"AI: Result: {result}")
+            else:
+                print("AI: No more steps in the plan.")
+            continue
 
         response = ai.chat(user_input)
         print(f"AI: {response}")
