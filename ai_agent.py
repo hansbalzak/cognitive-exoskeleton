@@ -85,6 +85,8 @@ class SimpleAI:
         webbrowser.open(search_url)
 
     def summarize_file(self, file_path: str) -> str:
+        if not os.path.exists(file_path):
+            return "AI: The file does not exist!"
         with open(file_path, "r") as file:
             content = file.read()
         return self.chat(f"Summarize the following text:\n{content}")
