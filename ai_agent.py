@@ -23,6 +23,22 @@ class SimpleAI:
                 )
 
         self.conversation = []
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+
+        self.session = requests.Session()
+        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        self.session.mount("http://", HTTPAdapter(max_retries=retries))
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
+        # Ensure personality.txt exists
+        if not os.path.exists("personality.txt"):
+            with open("personality.txt", "w", encoding="utf-8") as f:
+                f.write(
+                    "You are Xero, a friendly chatting coding bot but can also just have friendly conversations."
+                )
+
+        self.conversation = []
 
     def chat(self, user_text: str) -> str:
         url = f"{self.base_url}/chat/completions"
@@ -70,6 +86,7 @@ class SimpleAI:
         print("  /help            Show this help")
         print("  /clear           Clear chat history")
         print("  /exit, /quit     Exit the program")
+        print("  /improve         Improve the AI's code")
         print("  summarize <path> Summarize a local file (text only)")
 
     def summarize_file(self, file_path: str) -> str:
@@ -81,6 +98,11 @@ class SimpleAI:
         except UnicodeDecodeError:
             return "AI: File is not UTF-8 text (binary or different encoding)."
         return self.chat(f"Summarize the following text:\n\n{content}")
+
+    def improve_self(self):
+        # Placeholder for self-improvement logic
+        print("AI: Improving self...")
+        # Add actual self-improvement logic here
 
 
 def main():
@@ -104,6 +126,10 @@ def main():
             file_path = user_input.split(" ", 1)[1].strip()
             summary = ai.summarize_file(file_path)
             print(f"AI: Summary of {file_path}:\n{summary}")
+            continue
+
+        if cmd in ("/improve", "improve"):
+            ai.improve_self()
             continue
 
         response = ai.chat(user_input)
