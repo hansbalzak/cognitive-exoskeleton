@@ -1,3 +1,6 @@
 {"id": 1, "fact": "mijn naam is hans balzak mijn preferred language is nederlands", "confidence": 0.8, "source": "user", "timestamp": "2026-02-13T16:29:38.964893"}
 {"id": 2, "fact": "ik ben hans balzak ik heb je gemaakt", "confidence": 0.7, "source": "user", "timestamp": "2026-02-13T17:05:55.782797"}
 {"id": 3, "fact": "my name is hans mij preferred_language is English", "confidence": 0.9, "source": "user", "timestamp": "2026-02-13T17:07:13.194500"}
+{"id": 4, "fact": "none", "confidence": 1.0, "source": "user", "timestamp": "2026-02-13T22:44:27.315415"}
+{"id": 5, "fact": "Je hebt een vrolijke en behulpzaam begroeting gegeven. Het is goed om vriendelijk en direct te zijn bij het aanbieden van assistentie.", "confidence": 1.0, "source": "user", "timestamp": "2026-02-13T22:51:28.108110"}
+{"id": 6, "fact": "Store the user's willingness to help in future interactions.", "confidence": 1.0, "source": "user", "timestamp": "2026-02-13T22:51:33.168025"}
