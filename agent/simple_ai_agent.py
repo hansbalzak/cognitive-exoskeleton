@@ -8,6 +8,8 @@ class SimpleAI:
         response = requests.post(self.url, json={"command": command})
         print(f"Response status code: {response.status_code}")
         print(f"Response content: {response.content}")
+        if response.status_code != 200:
+            print(f"Error: {response.json().get('error', 'Unknown error')}")
         return response.json().get("response", "No response")
 
     def hello(self):
