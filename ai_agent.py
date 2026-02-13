@@ -139,7 +139,15 @@ class SimpleAI:
                 if isinstance(node, ast.Name):
                     used_imports.discard(node.id)
 
-            unused_imports = [imp for imp in ast.walk(tree) if isinstance(imp, (ast.Import, ast.ImportFrom)) and imp.module not in used_imports]
+            unused_imports = []
+            for imp in ast.walk(tree):
+                if isinstance(imp, ast.Import):
+                    for alias in imp.names:
+                        if alias.name.split('.')[0] not in used_imports:
+                            unused_imports.append(imp)
+                elif isinstance(imp, ast.ImportFrom):
+                    if imp.module and imp.module not in used_imports:
+                        unused_imports.append(imp)
             if unused_imports:
                 improvements_found = True
                 print("AI: Unused imports found:")
