@@ -29,7 +29,9 @@ class SimpleAI:
                 print("Error text:", r.text)
             return "No response"
 
-        return user_text
+        response_data = r.json()
+        assistant_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        return assistant_message
 
     def hello(self):
         print(self.chat("hello"))
