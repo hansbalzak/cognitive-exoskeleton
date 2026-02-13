@@ -14,7 +14,16 @@ from typing import Any, Dict, List, Tuple
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import logging
+from logging.handlers import RotatingFileHandler
 
+# Setup logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+handler = RotatingFileHandler('logs/agent.log', maxBytes=1024*1024*5, backupCount=3)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 # --- Optional sandbox tools (no-crash fallback) ---
 try:
@@ -50,10 +59,17 @@ def _ensure_file(path: Path, content: str = "") -> None:
         path.write_text(content, encoding="utf-8")
 
 
+def _atomic_write_json(path: Path, data: Any) -> None:
+    temp_path = path.with_suffix('.tmp')
+    with temp_path.open('w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False)
+    temp_path.rename(path)
+
+
 class SimpleAI:
     def __init__(self):
         self.base_url = "http://127.0.0.1:8080/v1"
-        self.model = "gpt-3.5-turbo"
+        self.model = "Qwen2.5-7B-Instruct"
         self.temperature = 0.7
         self.max_tokens = 100
 
@@ -113,7 +129,7 @@ class SimpleAI:
         return []
 
     def save_conversation(self) -> None:
-        self.conversation_path.write_text(json.dumps(self.conversation, indent=2), encoding="utf-8")
+        _atomic_write_json(self.conversation_path, self.conversation)
 
     def clear_conversation(self) -> str:
         self.conversation = []
@@ -127,7 +143,7 @@ class SimpleAI:
         return prof
 
     def save_profile(self, profile: Dict[str, Any]) -> None:
-        self.profile_path.write_text(json.dumps(profile, indent=2), encoding="utf-8")
+        _atomic_write_json(self.profile_path, profile)
 
     def load_facts(self) -> List[Dict[str, Any]]:
         if not self.facts_path.exists():
@@ -171,7 +187,10 @@ class SimpleAI:
         return identity
 
     def save_identity(self, identity: Dict[str, Any]) -> None:
-        self.identity_path.write_text(json.dumps(identity, indent=2), encoding="utf-8")
+        _atomic_write_json(self.identity_path, identity)
+
+    def validate_identity(self, identity: Dict[str, Any]) -> bool:
+        return isinstance(identity, dict) and "style" in identity and "values" in identity and "preferences" in identity
 
     # --------- LLM chat ---------
     def chat(self, user_text: str, stream: bool = False) -> str:
@@ -197,6 +216,9 @@ class SimpleAI:
 
         if stream:
             response = self.session.post(url, headers=headers, json=payload, stream=True, timeout=120)
+            if response.status_code != 200:
+                return f"HTTP {response.status_code}: {response.text}"
+
             assistant = ""
             for line in response.iter_lines():
                 if line:
@@ -210,7 +232,7 @@ class SimpleAI:
                                 sys.stdout.write(content)
                                 sys.stdout.flush()
                     except Exception as e:
-                        print(f"Error processing stream: {e}")
+                        logger.error(f"Error processing stream: {e}")
             # Update conversation after stream completes
             self.conversation.append({"role": "user", "content": user_text})
             self.conversation.append({"role": "assistant", "content": assistant})
@@ -220,6 +242,7 @@ class SimpleAI:
         else:
             response = self.session.post(url, headers=headers, json=payload, timeout=120)
             if response.status_code != 200:
+                logger.error(f"HTTP {response.status_code}: {response.text}")
                 try:
                     return f"HTTP {response.status_code}: {response.json()}"
                 except Exception:
@@ -281,6 +304,7 @@ class SimpleAI:
 
         r = self.session.post(url, headers=headers, json=payload, timeout=120)
         if r.status_code != 200:
+            logger.error(f"HTTP {r.status_code}: {r.text}")
             try:
                 return f"HTTP {r.status_code}: {r.json()}"
             except Exception:
@@ -498,7 +522,14 @@ class SimpleAI:
         updated_facts = []
 
         for fact in facts:
-            fact["confidence"] = max(0.0, fact["confidence"] - 0.1)
+            timestamp = fact.get("timestamp", "")
+            try:
+                fact_date = datetime.fromisoformat(timestamp)
+                age_days = (datetime.now() - fact_date).days
+                fact["confidence"] = max(0.0, fact["confidence"] - (age_days * 0.01))
+            except (ValueError, TypeError):
+                fact["confidence"] = max(0.0, fact["confidence"] - 0.1)
+
             if fact["confidence"] >= 0.2:
                 updated_facts.append(fact)
 
@@ -524,10 +555,7 @@ class SimpleAI:
 
         response = self.session.post(url, headers=headers, json=payload, timeout=120)
         if response.status_code != 200:
-            try:
-                print(f"HTTP {response.status_code}: {response.json()}")
-            except Exception:
-                print(f"HTTP {response.status_code}: {response.text}")
+            logger.error(f"HTTP {response.status_code}: {response.text}")
             self.fallback_reflect(assistant_reply)
             return
 
@@ -547,7 +575,7 @@ class SimpleAI:
                 self.fallback_reflect(assistant_reply)
                 return
         except json.JSONDecodeError:
-            print("Failed to decode JSON from reflection response.")
+            logger.error("Failed to decode JSON from reflection response.")
             self.fallback_reflect(assistant_reply)
             return
 
@@ -560,6 +588,10 @@ class SimpleAI:
 
         with self.self_reflection_log_path.open("a", encoding="utf-8") as f:
             f.write(reflection_entry)
+
+        # If memory_suggestion is non-empty, call remember_fact
+        if memory_suggestion:
+            self.remember_fact(memory_suggestion)
 
     def fallback_reflect(self, assistant_reply: str) -> None:
         quality = "Good"
@@ -607,7 +639,7 @@ class SimpleAI:
         headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
 
         messages: List[Dict[str, str]] = [
-            {"role": "system", "content": "Update the identity based on the recent conversation."},
+            {"role": "system", "content": "Return ONLY valid JSON with keys: style (string), values (list), preferences (object). Keep concise. Do not add new keys."},
             {"role": "user", "content": json.dumps(self.conversation[-20:])}
         ]
 
@@ -621,10 +653,7 @@ class SimpleAI:
 
         response = self.session.post(url, headers=headers, json=payload, timeout=120)
         if response.status_code != 200:
-            try:
-                print(f"HTTP {response.status_code}: {response.json()}")
-            except Exception:
-                print(f"HTTP {response.status_code}: {response.text}")
+            logger.error(f"HTTP {response.status_code}: {response.text}")
             return
 
         data = response.json()
@@ -634,13 +663,13 @@ class SimpleAI:
 
         try:
             new_identity = json.loads(assistant)
-            if isinstance(new_identity, dict) and "style" in new_identity and "values" in new_identity and "preferences" in new_identity:
+            if self.validate_identity(new_identity):
                 self.identity = new_identity
                 self.save_identity(new_identity)
             else:
-                print("Invalid identity JSON received.")
+                logger.warning("Invalid identity JSON received.")
         except json.JSONDecodeError:
-            print("Failed to decode JSON from identity update response.")
+            logger.error("Failed to decode JSON from identity update response.")
 
 def main():
     ai = SimpleAI()
