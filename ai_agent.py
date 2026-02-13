@@ -22,6 +22,11 @@ from logging.handlers import RotatingFileHandler
 # Setup logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
+
+# Ensure logs directory exists
+logs_dir = Path("logs")
+logs_dir.mkdir(parents=True, exist_ok=True)
+
 handler = RotatingFileHandler('logs/agent.log', maxBytes=1024*1024*5, backupCount=3)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
@@ -204,7 +209,7 @@ class SimpleAI:
                 "values": ["respect boundaries", "stay on topic", "be polite and professional", "provide clear and concise answers", "encourage learning"],
                 "preferences": {
                     "language": "English",
-                    "timezone": "UTC"
+                   , "timezone": "UTC"
                 }
             }
         return identity
