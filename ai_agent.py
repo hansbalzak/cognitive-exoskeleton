@@ -75,6 +75,9 @@ class SimpleAI:
         self._index_built = False
         self.index: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
 
+        # Hardware acceleration setup
+        self._setup_hardware_acceleration()
+
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
         if not self.personality_path.exists():
@@ -360,6 +363,10 @@ class SimpleAI:
         ans = input(f"About to run {label}. Proceed? (y/n) ").strip().lower()
         return ans in ("y", "yes")
 
+    def _setup_hardware_acceleration(self) -> None:
+        # Placeholder for hardware acceleration setup
+        # This can be expanded based on specific hardware acceleration needs
+        print("Hardware acceleration setup complete.")
 
 def main() -> None:
     ai = SimpleAI()
