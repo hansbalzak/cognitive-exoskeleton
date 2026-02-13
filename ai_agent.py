@@ -7,7 +7,7 @@ import os
 import re
 import sys
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
@@ -379,6 +379,7 @@ class SimpleAI:
                 "  /list <dir>           List dir via sandbox tool (if available)",
                 "  /run <cmd> [args...]  Run allowlisted shell via sandbox tool (if available) [asks approval]",
                 "  /summarize            Summarize the conversation and keep the last 10 messages",
+                "  /decay_facts          Decay confidence of facts and remove low-confidence ones",
             ]
         )
 
@@ -460,6 +461,9 @@ class SimpleAI:
             self.save_conversation()
             return "Conversation summarized and updated."
 
+        if cmd == "/decay_facts":
+            return self.decay_facts()
+
         return "Unknown command. Type /help."
 
     def _approve(self, label: str) -> bool:
@@ -474,38 +478,17 @@ class SimpleAI:
         # This can be expanded based on specific hardware acceleration needs
         print("Hardware acceleration setup complete.")
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run the SimpleAI agent.")
-    parser.add_argument("--base_url", default=os.getenv("AI_BASE_URL", "http://127.0.0.1:8080/v1"), help="Base URL for the AI model")
-    parser.add_argument("--model", default=os.getenv("AI_MODEL", "gpt-3.5-turbo"), help="AI model to use")
-    parser.add_argument("--temperature", type=float, default=float(os.getenv("AI_TEMPERATURE", "0.2")), help="Temperature for the AI model")
-    parser.add_argument("--max_tokens", type=int, default=int(os.getenv("AI_MAX_TOKENS", "400")), help="Max tokens for the AI model")
-    parser.add_argument("--stream", action="store_true", help="Enable streaming responses")
+    def decay_facts(self) -> str:
+        facts = self.load_facts()
+        updated_facts = []
 
-    args = parser.parse_args()
+        for fact in facts:
+            fact["confidence"] = max(0.0, fact["confidence"] - 0.1)
+            if fact["confidence"] >= 0.2:
+                updated_facts.append(fact)
 
-    ai = SimpleAI(base_url=args.base_url, model=args.model, temperature=args.temperature, max_tokens=args.max_tokens)
-    print("Type /help for commands. /exit to quit.")
-
-    message_count = 0
-    while True:
-        user_input = input("You: ").strip()
-        if not user_input:
-            continue
-
-        if user_input.startswith("/"):
-            response = ai.handle_command(user_input)
-            if response == "__EXIT__":
-                print("goodbye see you soon!")
-                break
-            print(f"AI: {response}")
-        else:
-            response = ai.chat(user_input, stream=args.stream)
-            print(f"AI: {response}")
-
-        message_count += 1
-        if message_count % 20 == 0:
-            ai.trim_conversation()
+        self.save_facts(updated_facts)
+        return "Facts decayed and low-confidence ones removed."
 
 if __name__ == "__main__":
     main()
