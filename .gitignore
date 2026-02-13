@@ -1,1 +1,7 @@
 .aider*
+conversation.json
+identity.json
+profile.json
+facts.jsonl
+logs/
+agent.lock
