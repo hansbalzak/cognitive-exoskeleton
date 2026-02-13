@@ -40,6 +40,40 @@ class SimpleAI:
         if not os.path.exists("personality.txt"):
             with open("personality.txt", "w") as file:
                 file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.session = requests.Session()
+        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        self.session.mount("http://", HTTPAdapter(max_retries=retries))
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
+        # Ensure personality.txt exists
+        if not os.path.exists("personality.txt"):
+            with open("personality.txt", "w") as file:
+                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
+        self.conversation = []
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.session = requests.Session()
+        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        self.session.mount("http://", HTTPAdapter(max_retries=retries))
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
+        # Ensure personality.txt exists
+        if not os.path.exists("personality.txt"):
+            with open("personality.txt", "w") as file:
+                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.session = requests.Session()
+        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        self.session.mount("http://", HTTPAdapter(max_retries=retries))
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
+        # Ensure personality.txt exists
+        if not os.path.exists("personality.txt"):
+            with open("personality.txt", "w") as file:
+                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
 
     def chat(self, user_text: str) -> str:
         url = f"{self.base_url}/chat/completions"
@@ -91,6 +125,16 @@ class SimpleAI:
         self.conversation = []
         print("Conversation cleared.")
 
+    def help(self):
+        print("Available commands:")
+        print("  - help: Show this help message.")
+        print("  - quit: Exit the program.")
+        print("  - clear: Clear the conversation.")
+        print("  - summarize <file_path>: Summarize the content of the specified file.")
+        print("  - hello: Greet the AI.")
+        print("  - how are you?: Ask the AI how it is.")
+        print("  - goodbye: Say goodbye to the AI.")
+
     def search_internet(self, query: str):
         """
         Simple internet lookup by opening a browser search.
@@ -126,6 +170,8 @@ if __name__ == "__main__":
             break
         elif user_input.lower() == "clear":
             ai.clear_conversation()
+        elif user_input.lower() == "help":
+            ai.help()
         elif user_input.lower().startswith("summarize"):
             parts = user_input.split(" ", 1)
             if len(parts) < 2:
