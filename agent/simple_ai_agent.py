@@ -1,5 +1,6 @@
 import os
 import requests
+import webbrowser
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
