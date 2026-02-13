@@ -10,6 +10,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+import threading
+import time
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -66,6 +68,13 @@ def _atomic_write_json(path: Path, data: Any) -> None:
     temp_path.rename(path)
 
 
+def _atomic_write_text(path: Path, content: str) -> None:
+    temp_path = path.with_suffix('.tmp')
+    with temp_path.open('w', encoding='utf-8') as f:
+        f.write(content)
+    temp_path.rename(path)
+
+
 class SimpleAI:
     def __init__(self):
         self.base_url = "http://127.0.0.1:8080/v1"
@@ -87,6 +96,15 @@ class SimpleAI:
         self.conversation_path = self.repo_root / "conversation.json"
         self.identity_path = self.repo_root / "identity.json"
         self.self_reflection_log_path = self.repo_root / "self_reflection.log"
+        self.lockfile_path = self.repo_root / "agent.lock"
+
+        # Check for lockfile
+        if self.lockfile_path.exists():
+            print("Agent is already running. Exiting.")
+            sys.exit(1)
+
+        # Create lockfile
+        self.lockfile_path.touch()
 
         self.ensure_personality_file()
         self.ensure_profile_and_facts()
@@ -102,6 +120,11 @@ class SimpleAI:
 
         # Message counter
         self.user_message_count = 0
+
+        # Circuit breaker
+        self.consecutive_failures = 0
+        self.circuit_breaker_active = False
+        self.circuit_breaker_end_time = 0
 
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
@@ -193,6 +216,28 @@ class SimpleAI:
         return isinstance(identity, dict) and "style" in identity and "values" in identity and "preferences" in identity
 
     # --------- LLM chat ---------
+    def _post_chat(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int, stream: bool = False) -> Tuple[bool, Any]:
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+        }
+
+        try:
+            response = self.session.post(url, headers=headers, json=payload, timeout=(10, 120))
+            if response.status_code == 200:
+                return True, response.json()
+            else:
+                logger.error(f"HTTP {response.status_code}: {response.text}")
+                return False, response.text
+        except requests.RequestException as e:
+            logger.error(f"Request failed: {e}")
+            return False, str(e)
+
     def chat(self, user_text: str, stream: bool = False) -> str:
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
@@ -215,9 +260,9 @@ class SimpleAI:
         }
 
         if stream:
-            response = self.session.post(url, headers=headers, json=payload, stream=True, timeout=120)
-            if response.status_code != 200:
-                return f"HTTP {response.status_code}: {response.text}"
+            ok, response = self._post_chat(messages, self.temperature, self.max_tokens, stream=True)
+            if not ok:
+                return response
 
             assistant = ""
             for line in response.iter_lines():
@@ -231,8 +276,8 @@ class SimpleAI:
                                 assistant += content
                                 sys.stdout.write(content)
                                 sys.stdout.flush()
-                    except Exception as e:
-                        logger.error(f"Error processing stream: {e}")
+                    except json.JSONDecodeError:
+                        continue
             # Update conversation after stream completes
             self.conversation.append({"role": "user", "content": user_text})
             self.conversation.append({"role": "assistant", "content": assistant})
@@ -240,15 +285,15 @@ class SimpleAI:
             self.save_conversation()
             return assistant
         else:
-            response = self.session.post(url, headers=headers, json=payload, timeout=120)
-            if response.status_code != 200:
-                logger.error(f"HTTP {response.status_code}: {response.text}")
-                try:
-                    return f"HTTP {response.status_code}: {response.json()}"
-                except Exception:
-                    return f"HTTP {response.status_code}: {response.text}"
+            ok, response = self._post_chat(messages, self.temperature, self.max_tokens)
+            if not ok:
+                # Retry once after 1s on network failure
+                time.sleep(1)
+                ok, response = self._post_chat(messages, self.temperature, self.max_tokens)
+                if not ok:
+                    return response
 
-            data = response.json()
+            data = response
             assistant = data.get("choices", [{}])[0].get("message", {}).get("content", "")
             if not isinstance(assistant, str):
                 assistant = str(assistant)
@@ -286,31 +331,21 @@ class SimpleAI:
             self.save_identity(self.identity)
 
     def summarize_conversation(self) -> str:
-        url = f"{self.base_url}/chat/completions"
-        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+        if self.circuit_breaker_active:
+            logger.warning("Circuit breaker active. Skipping summarize_conversation.")
+            return ""
 
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": "Summarize the following conversation into a compact summary with the following sections:\n\n1. User goals\n2. Important decisions\n3. Open tasks/questions\n4. Stable user prefs\n\nEnsure the summary stays under ~800 characters."},
             {"role": "user", "content": json.dumps(self.conversation)}
         ]
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.0,
-            "max_tokens": 200,
-            "stream": False,
-        }
+        ok, response = self._post_chat(messages, 0.0, 200, stream=False)
+        if not ok:
+            logger.error(f"Failed to summarize conversation: {response}")
+            return ""
 
-        r = self.session.post(url, headers=headers, json=payload, timeout=120)
-        if r.status_code != 200:
-            logger.error(f"HTTP {r.status_code}: {r.text}")
-            try:
-                return f"HTTP {r.status_code}: {r.json()}"
-            except Exception:
-                return f"HTTP {r.status_code}: {r.text}"
-
-        data = r.json()
+        data = response
         summary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not isinstance(summary, str):
             summary = str(summary)
@@ -419,6 +454,7 @@ class SimpleAI:
                 "  /run <cmd> [args...]  Run allowlisted shell via sandbox tool (if available) [asks approval]",
                 "  /summarize            Summarize the conversation and keep the last 10 messages",
                 "  /decay_facts          Decay confidence of facts and remove low-confidence ones",
+                "  /health               Check agent health",
             ]
         )
 
@@ -503,6 +539,9 @@ class SimpleAI:
         if cmd == "/decay_facts":
             return self.decay_facts()
 
+        if cmd == "/health":
+            return self.health_check()
+
         return "Unknown command. Type /help."
 
     def _approve(self, label: str) -> bool:
@@ -537,29 +576,21 @@ class SimpleAI:
         return "Facts decayed and low-confidence ones removed."
 
     def self_reflect(self, assistant_reply: str) -> None:
-        url = f"{self.base_url}/chat/completions"
-        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+        if self.circuit_breaker_active:
+            logger.warning("Circuit breaker active. Skipping self_reflect.")
+            return
 
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": "Reflect on the assistant's reply and provide a JSON response with the following structure: {quality:1-5, uncertainty:'low|med|high', memory_suggestion:''}."},
             {"role": "user", "content": assistant_reply}
         ]
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": 0.0,
-            "max_tokens": 120,
-            "stream": False,
-        }
-
-        response = self.session.post(url, headers=headers, json=payload, timeout=120)
-        if response.status_code != 200:
-            logger.error(f"HTTP {response.status_code}: {response.text}")
-            self.fallback_reflect(assistant_reply)
+        ok, response = self._post_chat(messages, 0.0, 120, stream=False)
+        if not ok:
+            logger.error(f"Failed to self-reflect: {response}")
             return
 
-        data = response.json()
+        data = response
         assistant = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not isinstance(assistant, str):
             assistant = str(assistant)
@@ -572,11 +603,9 @@ class SimpleAI:
                 memory_suggestion = reflection["memory_suggestion"]
             else:
                 print("Invalid reflection JSON received.")
-                self.fallback_reflect(assistant_reply)
                 return
         except json.JSONDecodeError:
             logger.error("Failed to decode JSON from reflection response.")
-            self.fallback_reflect(assistant_reply)
             return
 
         # Log the reflection
@@ -635,28 +664,21 @@ class SimpleAI:
             f.write(reflection_entry)
 
     def update_identity_from_conversation(self) -> None:
-        url = f"{self.base_url}/chat/completions"
-        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+        if self.circuit_breaker_active:
+            logger.warning("Circuit breaker active. Skipping update_identity_from_conversation.")
+            return
 
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": "Return ONLY valid JSON with keys: style (string), values (list), preferences (object). Keep concise. Do not add new keys."},
             {"role": "user", "content": json.dumps(self.conversation[-20:])}
         ]
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": 200,
-            "stream": False,
-        }
-
-        response = self.session.post(url, headers=headers, json=payload, timeout=120)
-        if response.status_code != 200:
-            logger.error(f"HTTP {response.status_code}: {response.text}")
+        ok, response = self._post_chat(messages, self.temperature, 200, stream=False)
+        if not ok:
+            logger.error(f"Failed to update identity: {response}")
             return
 
-        data = response.json()
+        data = response
         assistant = data.get("choices", [{}])[0].get("message", {}).get("content", "")
         if not isinstance(assistant, str):
             assistant = str(assistant)
@@ -671,16 +693,35 @@ class SimpleAI:
         except json.JSONDecodeError:
             logger.error("Failed to decode JSON from identity update response.")
 
+    def health_check(self) -> str:
+        url = f"{self.base_url}/models"
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+
+        try:
+            response = self.session.get(url, headers=headers, timeout=(10, 120))
+            if response.status_code == 200:
+                return "OK"
+            else:
+                return f"FAIL: HTTP {response.status_code}"
+        except requests.RequestException as e:
+            return f"FAIL: {e}"
+
+    def handle_exit(self) -> None:
+        self.lockfile_path.unlink()
+
 def main():
     ai = SimpleAI()
 
-    while True:
-        user_input = input("User: ")
-        if user_input in ("/exit", "/quit"):
-            break
-        response = ai.chat(user_input)
-        print(f"Assistant: {response}")
-        ai.self_reflect(response)
+    try:
+        while True:
+            user_input = input("User: ")
+            if user_input in ("/exit", "/quit"):
+                break
+            response = ai.chat(user_input)
+            print(f"Assistant: {response}")
+            ai.self_reflect(response)
+    finally:
+        ai.handle_exit()
 
 if __name__ == "__main__":
     main()
