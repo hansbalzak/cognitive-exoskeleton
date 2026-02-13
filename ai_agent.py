@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import random
 from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -58,6 +59,8 @@ def _safe_load_json(path: Path, default: Any) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
+        logger.warning(f"Failed to load {path}. Renaming to *.corrupt-{datetime.now().isoformat()}")
+        path.rename(path.with_suffix(f'.corrupt-{datetime.now().isoformat()}'))
         return default
 
 
@@ -88,6 +91,7 @@ class SimpleAI:
         self.max_tokens = 100
 
         self.session = requests.Session()
+        self.session.headers.update({"Connection": "keep-alive"})
         retries = Retry(total=5, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
         self.session.mount("http://", HTTPAdapter(max_retries=retries))
         self.session.mount("https://", HTTPAdapter(max_retries=retries))
@@ -130,6 +134,10 @@ class SimpleAI:
         self.consecutive_failures = 0
         self.circuit_breaker_active = False
         self.circuit_breaker_end_time = 0
+
+        # Reflect sampling
+        self.reflect_counter = 0
+        self.reflect_interval = 5
 
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
@@ -243,32 +251,35 @@ class SimpleAI:
             logger.error(f"Request failed: {e}")
             return False, str(e)
 
+    def _post_chat_stream(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int) -> requests.Response:
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": True,
+        }
+
+        return self.session.post(url, headers=headers, json=payload, stream=True)
+
     def chat(self, user_text: str, stream: bool = False) -> str:
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
 
         personality = self.personality_path.read_text(encoding="utf-8", errors="ignore").strip()
-        identity = json.dumps(self.identity, indent=2)
+        identity = self.identity
+        identity_str = f"Style: {identity['style']}\nValues: {', '.join(identity['values'][:3])}\nPrefs: language={identity['preferences']['language']}, timezone={identity['preferences']['timezone']}"
 
         messages: List[Dict[str, str]] = [
-            {"role": "system", "content": f"{personality}\n\nIdentity:\n{identity}"}
+            {"role": "system", "content": f"{personality}\n\nIdentity:\n{identity_str}"}
         ]
         messages.extend(self.conversation)
         messages.append({"role": "user", "content": user_text})
 
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "stream": stream,
-        }
-
         if stream:
-            ok, response = self._post_chat(messages, self.temperature, self.max_tokens, stream=True)
-            if not ok:
-                return response
-
+            response = self._post_chat_stream(messages, self.temperature, self.max_tokens)
             assistant = ""
             for line in response.iter_lines():
                 if line:
@@ -323,7 +334,27 @@ class SimpleAI:
                 self.update_identity_from_conversation()
                 self.user_message_count = 0
 
+            # Reflect sampling
+            if random.random() < 0.2:
+                self.self_reflect(assistant)
+
             return assistant
+
+    def _contains_uncertainty_markers(self, text: str) -> bool:
+        uncertainty_markers = [
+            "I'm not sure",
+            "I don't know",
+            "I can't help with that",
+            "I don't understand",
+            "I'm sorry",
+            "I'm unable to",
+            "I'm not capable of",
+            "I'm not equipped to",
+            "I'm not programmed to",
+            "I'm not designed to",
+            "I'm not built to"
+        ]
+        return any(marker in text for marker in uncertainty_markers)
 
     # --------- Conversation Trimming ---------
     def trim_conversation(self) -> None:
