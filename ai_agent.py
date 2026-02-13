@@ -102,9 +102,13 @@ if __name__ == "__main__":
             print("goodbye see you soon!")
             break
         elif user_input.lower().startswith("summarize"):
-            file_path = user_input.split(" ", 1)[1].strip()
-            summary = ai.summarize_file(file_path)
-            print(f"AI: Summary of {file_path}:\n{summary}")
+            parts = user_input.split(" ", 1)
+            if len(parts) < 2:
+                print("AI: You forgot to add a file path!")
+            else:
+                file_path = parts[1].strip()
+                summary = ai.summarize_file(file_path)
+                print(f"AI: Summary of {file_path}:\n{summary}")
         else:
             response = ai.chat(user_input)
             print(f"AI: {response}")
