@@ -1,9 +1,15 @@
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 class SimpleAI:
     def __init__(self, base_url="http://127.0.0.1:8080/v1", model="gpt-3.5-turbo"):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.session = requests.Session()
+        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
+        self.session.mount("http://", HTTPAdapter(max_retries=retries))
+        self.session.mount("https://", HTTPAdapter(max_retries=retries))
 
     def chat(self, user_text: str) -> str:
         url = f"{self.base_url}/chat/completions"
@@ -19,7 +25,7 @@ class SimpleAI:
             "stream": False,
         }
 
-        r = requests.post(url, headers=headers, json=payload, timeout=120)
+        r = self.session.post(url, headers=headers, json=payload, timeout=120)
         print(f"Request URL: {url}")
         print(f"Response Status Code: {r.status_code}")
         if r.status_code != 200:
