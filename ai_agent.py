@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
 
-import io
-import traceback
-import json
 import os
 import sys
 import subprocess
 
-# Create and activate virtual environment
-venv_path = os.path.join(os.path.dirname(__file__), "venv")
-if not os.path.exists(venv_path):
-    subprocess.run([sys.executable, "-m", "venv", venv_path], check=True)
-    print("Virtual environment created.")
+def ensure_venv():
+    venv_path = os.path.join(os.path.dirname(__file__), "venv")
+    if not os.environ.get("VIRTUAL_ENV") and sys.prefix == sys.base_prefix:
+        if not os.path.exists(venv_path):
+            subprocess.run([sys.executable, "-m", "venv", venv_path], check=True)
+            print("Virtual environment created.")
+        subprocess.run([os.path.join(venv_path, "bin", "python3"), __file__], env=os.environ.copy())
+        sys.exit(0)
 
-# Activate virtual environment
-activate_script = os.path.join(venv_path, "bin", "activate_this.py")
-exec(open(activate_script).read(), dict(__file__=activate_script))
+ensure_venv()
 
 import requests
 import ast
@@ -25,22 +23,6 @@ from requests.adapters import HTTPAdapter
 
 class SimpleAI:
     def __init__(self, base_url="http://127.0.0.1:8080/v1", model="gpt-3.5-turbo"):
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-
-        self.session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("http://", HTTPAdapter(max_retries=retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=retries))
-
-        # Ensure personality.txt exists
-        if not os.path.exists("personality.txt"):
-            with open("personality.txt", "w", encoding="utf-8") as f:
-                f.write(
-                    "You are Xero, a friendly chatting coding bot but can also just have friendly conversations."
-                )
-
-        self.conversation = []
         self.base_url = base_url.rstrip("/")
         self.model = model
 
@@ -185,7 +167,7 @@ class SimpleAI:
             print("AI: Installing necessary packages...")
             for imp in unused_imports:
                 module_name = ast.unparse(imp).split()[1].strip("'\"")
-                os.system(f"pip install {module_name}")
+                subprocess.run([os.path.join(os.path.dirname(__file__), "venv", "bin", "pip"), "install", module_name], check=True)
             print("AI: Packages installed.")
 
 
@@ -212,7 +194,7 @@ def main():
             print(f"AI: Summary of {file_path}:\n{summary}")
             continue
 
-        if cmd in ("/improve", "improve"):
+        if cmd in ("/self_improve", "self_improve"):
             ai.improve_self()
             continue
 
