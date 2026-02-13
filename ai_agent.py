@@ -1,13 +1,15 @@
+#!/usr/bin/env python3
 import os
 import requests
-import webbrowser
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+
 
 class SimpleAI:
     def __init__(self, base_url="http://127.0.0.1:8080/v1", model="gpt-3.5-turbo"):
         self.base_url = base_url.rstrip("/")
         self.model = model
+
         self.session = requests.Session()
         retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
         self.session.mount("http://", HTTPAdapter(max_retries=retries))
@@ -15,105 +17,47 @@ class SimpleAI:
 
         # Ensure personality.txt exists
         if not os.path.exists("personality.txt"):
-            with open("personality.txt", "w") as file:
-                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
+            with open("personality.txt", "w", encoding="utf-8") as f:
+                f.write(
+                    "You are Xero, a friendly chatting coding bot but can also just have friendly conversations."
+                )
+
         self.conversation = []
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("http://", HTTPAdapter(max_retries=retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=retries))
-
-        # Ensure personality.txt exists
-        if not os.path.exists("personality.txt"):
-            with open("personality.txt", "w") as file:
-                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("http://", HTTPAdapter(max_retries=retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=retries))
-
-        # Ensure personality.txt exists
-        if not os.path.exists("personality.txt"):
-            with open("personality.txt", "w") as file:
-                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("http://", HTTPAdapter(max_retries=retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=retries))
-
-        # Ensure personality.txt exists
-        if not os.path.exists("personality.txt"):
-            with open("personality.txt", "w") as file:
-                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
-        self.conversation = []
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("http://", HTTPAdapter(max_retries=retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=retries))
-
-        # Ensure personality.txt exists
-        if not os.path.exists("personality.txt"):
-            with open("personality.txt", "w") as file:
-                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
-        self.base_url = base_url.rstrip("/")
-        self.model = model
-        self.session = requests.Session()
-        retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
-        self.session.mount("http://", HTTPAdapter(max_retries=retries))
-        self.session.mount("https://", HTTPAdapter(max_retries=retries))
-
-        # Ensure personality.txt exists
-        if not os.path.exists("personality.txt"):
-            with open("personality.txt", "w") as file:
-                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
 
     def chat(self, user_text: str) -> str:
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
-        with open("personality.txt", "r") as file:
-            personality = file.read().strip()
 
-        self.conversation.append({"role": "user", "content": user_text})
+        # Load personality each time (so you can edit personality.txt live)
+        with open("personality.txt", "r", encoding="utf-8") as f:
+            personality = f.read().strip()
+
+        # Build messages: always include system, then full conversation
+        messages = [{"role": "system", "content": personality}] + self.conversation
+        messages.append({"role": "user", "content": user_text})
 
         payload = {
             "model": self.model,
-            "messages": self.conversation,
+            "messages": messages,
             "temperature": 0.2,
-            "max_tokens": 200,
+            "max_tokens": 400,
             "stream": False,
         }
 
         r = self.session.post(url, headers=headers, json=payload, timeout=120)
-        print(f"Request URL: {url}")
-        print(f"Response Status Code: {r.status_code}")
         if r.status_code != 200:
             try:
-                print("Error JSON:", r.json())
+                err = r.json()
             except Exception:
-                print("Error text:", r.text)
-            return "No response"
+                err = r.text
+            return f"No response (HTTP {r.status_code}): {err}"
 
-        response_data = r.json()
-        assistant_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        
+        data = r.json()
+        assistant_message = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+        # Save conversation (without system prompt)
+        self.conversation.append({"role": "user", "content": user_text})
         self.conversation.append({"role": "assistant", "content": assistant_message})
-
-        elif "summarize" in assistant_message.lower():
-            parts = assistant_message.split("file", 1)
-            if len(parts) < 2:
-                return "AI: You forgot to add a file path!"
-            else:
-                file_path = parts[1].strip()
-                summary = self.summarize_file(file_path)
-                return f"Summary of {file_path}:\n{summary}"
 
         return assistant_message
 
@@ -123,47 +67,48 @@ class SimpleAI:
 
     def help(self):
         print("Available commands:")
-        print("  - help: Show this help message.")
-        print("  - quit: Exit the program.")
-        print("  - clear: Clear the conversation.")
-        print("  - summarize <file_path>: Summarize the content of the specified file.")
-
+        print("  /help            Show this help")
+        print("  /clear           Clear chat history")
+        print("  /exit, /quit     Exit the program")
+        print("  summarize <path> Summarize a local file (text only)")
 
     def summarize_file(self, file_path: str) -> str:
         if not os.path.exists(file_path):
             return "AI: The file does not exist!"
-        with open(file_path, "r") as file:
-            content = file.read()
-        return self.chat(f"Summarize the following text:\n{content}")
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except UnicodeDecodeError:
+            return "AI: File is not UTF-8 text (binary or different encoding)."
+        return self.chat(f"Summarize the following text:\n\n{content}")
 
-    def hello(self):
-        print(self.chat("hello"))
 
-    def how_are_you(self):
-        print(self.chat("how are you?"))
-
-    def goodbye(self):
-        print(self.chat("goodbye"))
-
-if __name__ == "__main__":
+def main():
     ai = SimpleAI("http://127.0.0.1:8080/v1")
+
     while True:
-        user_input = input("You: ")
-        if user_input.lower() == "quit":
+        user_input = input("You: ").strip()
+        cmd = user_input.lower()
+
+        if cmd in ("/exit", "/quit", "exit", "quit"):
             print("goodbye see you soon!")
             break
-        elif user_input.lower() == "clear":
+        if cmd in ("/clear", "clear"):
             ai.clear_conversation()
-        elif user_input.lower() == "help":
+            continue
+        if cmd in ("/help", "help"):
             ai.help()
-        elif user_input.lower().startswith("summarize"):
-            parts = user_input.split(" ", 1)
-            if len(parts) < 2:
-                print("AI: You forgot to add a file path!")
-            else:
-                file_path = parts[1].strip()
-                summary = ai.summarize_file(file_path)
-                print(f"AI: Summary of {file_path}:\n{summary}")
-        else:
-            response = ai.chat(user_input)
-            print(f"AI: {response}")
+            continue
+
+        if cmd.startswith("summarize "):
+            file_path = user_input.split(" ", 1)[1].strip()
+            summary = ai.summarize_file(file_path)
+            print(f"AI: Summary of {file_path}:\n{summary}")
+            continue
+
+        response = ai.chat(user_input)
+        print(f"AI: {response}")
+
+
+if __name__ == "__main__":
+    main()
