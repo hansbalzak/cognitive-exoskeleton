@@ -1,3 +1,4 @@
+import os
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -10,6 +11,11 @@ class SimpleAI:
         retries = Retry(total=5, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
         self.session.mount("http://", HTTPAdapter(max_retries=retries))
         self.session.mount("https://", HTTPAdapter(max_retries=retries))
+
+        # Ensure personality.txt exists
+        if not os.path.exists("personality.txt"):
+            with open("personality.txt", "w") as file:
+                file.write("You are Xero, a friendly chatting coding bot but can also just have friendly conversations.")
 
     def chat(self, user_text: str) -> str:
         url = f"{self.base_url}/chat/completions"
