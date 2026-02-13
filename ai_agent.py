@@ -84,6 +84,9 @@ class SimpleAI:
         # Hardware acceleration setup
         self._setup_hardware_acceleration()
 
+        # Message counter
+        self.user_message_count = 0
+
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
         if not self.personality_path.exists():
@@ -240,6 +243,12 @@ class SimpleAI:
                 prof = self.load_profile()
                 prof["name"] = name
                 self.save_profile(prof)
+
+            # Update identity every 20 user messages
+            self.user_message_count += 1
+            if self.user_message_count >= 20:
+                self.update_identity_from_conversation()
+                self.user_message_count = 0
 
             return assistant
 
@@ -536,6 +545,46 @@ class SimpleAI:
 
         with self.self_reflection_log_path.open("a", encoding="utf-8") as f:
             f.write(reflection_entry)
+
+    def update_identity_from_conversation(self) -> None:
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": "Update the identity based on the recent conversation."},
+            {"role": "user", "content": json.dumps(self.conversation[-20:])}
+        ]
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": 200,
+            "stream": False,
+        }
+
+        response = self.session.post(url, headers=headers, json=payload, timeout=120)
+        if response.status_code != 200:
+            try:
+                print(f"HTTP {response.status_code}: {response.json()}")
+            except Exception:
+                print(f"HTTP {response.status_code}: {response.text}")
+            return
+
+        data = response.json()
+        assistant = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not isinstance(assistant, str):
+            assistant = str(assistant)
+
+        try:
+            new_identity = json.loads(assistant)
+            if isinstance(new_identity, dict) and "style" in new_identity and "values" in new_identity and "preferences" in new_identity:
+                self.identity = new_identity
+                self.save_identity(new_identity)
+            else:
+                print("Invalid identity JSON received.")
+        except json.JSONDecodeError:
+            print("Failed to decode JSON from identity update response.")
 
 def main():
     ai = SimpleAI()
