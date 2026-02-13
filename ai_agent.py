@@ -64,9 +64,13 @@ class SimpleAI:
             self.search_internet(query)
             return f"Searching the internet for: {query}"
         elif "summarize" in assistant_message.lower():
-            file_path = assistant_message.split("file", 1)[1].strip()
-            summary = self.summarize_file(file_path)
-            return f"Summary of {file_path}:\n{summary}"
+            parts = assistant_message.split("file", 1)
+            if len(parts) < 2:
+                return "AI: You forgot to add a file path!"
+            else:
+                file_path = parts[1].strip()
+                summary = self.summarize_file(file_path)
+                return f"Summary of {file_path}:\n{summary}"
 
         return assistant_message
 
