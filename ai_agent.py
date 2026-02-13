@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -50,9 +51,11 @@ def _ensure_file(path: Path, content: str = "") -> None:
 
 
 class SimpleAI:
-    def __init__(self, base_url: str = "http://127.0.0.1:8080/v1", model: str = "gpt-3.5-turbo"):
+    def __init__(self, base_url: str, model: str, temperature: float, max_tokens: int):
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
 
         self.session = requests.Session()
         retries = Retry(total=5, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
@@ -155,8 +158,8 @@ class SimpleAI:
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": 0.2,
-            "max_tokens": 400,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
             "stream": False,
         }
 
@@ -175,6 +178,7 @@ class SimpleAI:
         # Update memory
         self.conversation.append({"role": "user", "content": user_text})
         self.conversation.append({"role": "assistant", "content": assistant})
+        self.trim_conversation()
         self.save_conversation()
 
         # Optional: keep "name" in profile if user says "my name is X"
@@ -186,6 +190,46 @@ class SimpleAI:
             self.save_profile(prof)
 
         return assistant
+
+    # --------- Conversation Trimming ---------
+    def trim_conversation(self) -> None:
+        if len(self.conversation) > 40:
+            summary = self.summarize_conversation()
+            self.conversation = [
+                {"role": "system", "content": summary},
+                *self.conversation[-10:]
+            ]
+
+    def summarize_conversation(self) -> str:
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": "Summarize the following conversation."},
+            {"role": "user", "content": json.dumps(self.conversation)}
+        ]
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "max_tokens": 200,
+            "stream": False,
+        }
+
+        r = self.session.post(url, headers=headers, json=payload, timeout=120)
+        if r.status_code != 200:
+            try:
+                return f"HTTP {r.status_code}: {r.json()}"
+            except Exception:
+                return f"HTTP {r.status_code}: {r.text}"
+
+        data = r.json()
+        summary = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not isinstance(summary, str):
+            summary = str(summary)
+
+        return summary
 
     # --------- Facts / Profile ---------
     def remember_fact(self, fact: str) -> str:
@@ -287,6 +331,7 @@ class SimpleAI:
                 "  /write <path> <text>  Write file via sandbox tool (if available) [asks approval]",
                 "  /list <dir>           List dir via sandbox tool (if available)",
                 "  /run <cmd> [args...]  Run allowlisted shell via sandbox tool (if available) [asks approval]",
+                "  /summarize            Summarize the conversation and keep the last 10 messages",
             ]
         )
 
@@ -354,6 +399,15 @@ class SimpleAI:
                 return "Canceled."
             return run_shell(command_name, args)
 
+        if cmd == "/summarize":
+            summary = self.summarize_conversation()
+            self.conversation = [
+                {"role": "system", "content": summary},
+                *self.conversation[-10:]
+            ]
+            self.save_conversation()
+            return "Conversation summarized and updated."
+
         return "Unknown command. Type /help."
 
     def _approve(self, label: str) -> bool:
@@ -369,7 +423,15 @@ class SimpleAI:
         print("Hardware acceleration setup complete.")
 
 def main() -> None:
-    ai = SimpleAI()
+    parser = argparse.ArgumentParser(description="Run the SimpleAI agent.")
+    parser.add_argument("--base_url", default=os.getenv("AI_BASE_URL", "http://127.0.0.1:8080/v1"), help="Base URL for the AI model")
+    parser.add_argument("--model", default=os.getenv("AI_MODEL", "gpt-3.5-turbo"), help="AI model to use")
+    parser.add_argument("--temperature", type=float, default=float(os.getenv("AI_TEMPERATURE", "0.2")), help="Temperature for the AI model")
+    parser.add_argument("--max_tokens", type=int, default=int(os.getenv("AI_MAX_TOKENS", "400")), help="Max tokens for the AI model")
+
+    args = parser.parse_args()
+
+    ai = SimpleAI(base_url=args.base_url, model=args.model, temperature=args.temperature, max_tokens=args.max_tokens)
     print("Type /help for commands. /exit to quit.")
 
     while True:
