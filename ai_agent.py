@@ -389,6 +389,9 @@ class SimpleAI:
             return "\n".join(out)
 
         # Sandbox tools
+        if not SANDBOX_AVAILABLE:
+            return "ERROR: Sandbox tools are not available."
+
         if cmd.startswith("/read "):
             path = cmd[len("/read ") :].strip()
             return read_file(path)
@@ -413,6 +416,8 @@ class SimpleAI:
                 return "Usage: /run <cmd> [args...]"
             parts = rest.split()
             command_name, args = parts[0], parts[1:]
+            if command_name not in {"ls", "cat", "git", "python3", "pip", "grep"}:
+                return "ERROR: Command not allowed."
             if not self._approve(f"run_shell({command_name} {' '.join(args)})"):
                 return "Canceled."
             return run_shell(command_name, args)
