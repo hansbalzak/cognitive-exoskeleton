@@ -47,6 +47,12 @@ class SimpleAI:
 
         response_data = r.json()
         assistant_message = response_data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        
+        if "look up" in assistant_message.lower() or "search" in assistant_message.lower():
+            query = assistant_message.split("for", 1)[1].strip()
+            self.search_internet(query)
+            return f"Searching the internet for: {query}"
+
         return assistant_message
 
     def hello(self):
