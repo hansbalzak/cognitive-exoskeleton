@@ -506,6 +506,62 @@ class SimpleAI:
         return "Facts decayed and low-confidence ones removed."
 
     def self_reflect(self, assistant_reply: str) -> None:
+        url = f"{self.base_url}/chat/completions"
+        headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
+
+        messages: List[Dict[str, str]] = [
+            {"role": "system", "content": "Reflect on the assistant's reply and provide a JSON response with the following structure: {quality:1-5, uncertainty:'low|med|high', memory_suggestion:''}."},
+            {"role": "user", "content": assistant_reply}
+        ]
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": 120,
+            "stream": False,
+        }
+
+        response = self.session.post(url, headers=headers, json=payload, timeout=120)
+        if response.status_code != 200:
+            try:
+                print(f"HTTP {response.status_code}: {response.json()}")
+            except Exception:
+                print(f"HTTP {response.status_code}: {response.text}")
+            self.fallback_reflect(assistant_reply)
+            return
+
+        data = response.json()
+        assistant = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not isinstance(assistant, str):
+            assistant = str(assistant)
+
+        try:
+            reflection = json.loads(assistant)
+            if isinstance(reflection, dict) and "quality" in reflection and "uncertainty" in reflection and "memory_suggestion" in reflection:
+                quality = reflection["quality"]
+                uncertainty = reflection["uncertainty"]
+                memory_suggestion = reflection["memory_suggestion"]
+            else:
+                print("Invalid reflection JSON received.")
+                self.fallback_reflect(assistant_reply)
+                return
+        except json.JSONDecodeError:
+            print("Failed to decode JSON from reflection response.")
+            self.fallback_reflect(assistant_reply)
+            return
+
+        # Log the reflection
+        reflection_entry = f"Timestamp: {datetime.now().isoformat()}\n"
+        reflection_entry += f"Assistant Reply: {assistant_reply}\n"
+        reflection_entry += f"Quality: {quality}\n"
+        reflection_entry += f"Uncertainty: {uncertainty}\n"
+        reflection_entry += f"Memory Suggestions: {memory_suggestion}\n\n"
+
+        with self.self_reflection_log_path.open("a", encoding="utf-8") as f:
+            f.write(reflection_entry)
+
+    def fallback_reflect(self, assistant_reply: str) -> None:
         quality = "Good"
         uncertainty = "Low"
         memory_suggestions = []
