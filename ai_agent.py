@@ -203,7 +203,8 @@ class SimpleAI:
             "preferences": {
                 "language": "English",
                 "timezone": "UTC"
-            }
+            },
+            "name": "Xero"
         })
         if not isinstance(identity, dict):
             identity = {
@@ -212,7 +213,8 @@ class SimpleAI:
                 "preferences": {
                     "language": "English",
                     "timezone": "UTC"
-                }
+                },
+                "name": "Xero"
             }
         return identity
 
@@ -220,7 +222,7 @@ class SimpleAI:
         _atomic_write_json(self.identity_path, identity)
 
     def validate_identity(self, identity: Dict[str, Any]) -> bool:
-        return isinstance(identity, dict) and "style" in identity and "values" in identity and "preferences" in identity
+        return isinstance(identity, dict) and "style" in identity and "values" in identity and "preferences" in identity and "name" in identity
 
     # --------- LLM chat ---------
     def _post_chat(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int, stream: bool = False) -> Tuple[bool, Any]:
@@ -264,7 +266,7 @@ class SimpleAI:
 
         personality = self.personality_path.read_text(encoding="utf-8", errors="ignore").strip()
         identity = self.identity
-        identity_str = f"Style: {identity['style']}\nValues: {', '.join(identity['values'][:3])}\nPrefs: language={identity['preferences']['language']}, timezone={identity['preferences']['timezone']}"
+        identity_str = f"Style: {identity['style']}\nValues: {', '.join(identity['values'][:3])}\nPrefs: language={identity['preferences']['language']}, timezone={identity['preferences']['timezone']}\nName: {identity['name']}"
 
         messages: List[Dict[str, str]] = [
             {"role": "system", "content": f"{personality}\n\nIdentity:\n{identity_str}"}
@@ -694,7 +696,7 @@ class SimpleAI:
             return
 
         messages: List[Dict[str, str]] = [
-            {"role": "system", "content": "Return ONLY valid JSON with keys: style (string), values (list), preferences (object). Keep concise. Do not add new keys."},
+            {"role": "system", "content": "Return ONLY valid JSON with keys: style (string), values (list), preferences (object), name (string). Keep concise. Do not add new keys."},
             {"role": "user", "content": json.dumps(self.conversation[-20:])}
         ]
 
