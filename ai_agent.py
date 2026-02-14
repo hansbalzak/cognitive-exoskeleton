@@ -753,7 +753,7 @@ def main():
             stdscr.clear()
             stdscr.addstr(0, 0, "User: ")
             stdscr.addstr(0, 6, user_input)
-            stdscr.addstr(2, 0, "Assistant: " + assistant_response)
+            stdscr.addstr(2, 0, "Xero: " + assistant_response)
             stdscr.refresh()
 
             key = stdscr.getch()
