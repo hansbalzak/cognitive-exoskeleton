@@ -86,11 +86,11 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 class SimpleAI:
-    def __init__(self):
-        self.base_url = "http://127.0.0.1:8080/v1"
-        self.model = "Qwen2.5-7B-Instruct"
-        self.temperature = 0.7
-        self.max_tokens = 100
+    def __init__(self, base_url: str, model: str, temperature: float, max_tokens: int):
+        self.base_url = base_url
+        self.model = model
+        self.temperature = temperature
+        self.max_tokens = max_tokens
 
         self.session = requests.Session()
         self.session.headers.update({"Connection": "keep-alive"})
@@ -239,11 +239,21 @@ class SimpleAI:
         try:
             response = self.session.post(url, headers=headers, json=payload, timeout=(10, 120))
             if response.status_code == 200:
+                self.consecutive_failures = 0
+                self.circuit_breaker_active = False
                 return True, response.json()
             else:
+                self.consecutive_failures += 1
+                if self.consecutive_failures >= 3:
+                    self.circuit_breaker_active = True
+                    self.circuit_breaker_end_time = time.time() + 30
                 logger.error(f"HTTP {response.status_code}: {response.text}")
                 return False, response.text
         except requests.RequestException as e:
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= 3:
+                self.circuit_breaker_active = True
+                self.circuit_breaker_end_time = time.time() + 30
             logger.error(f"Request failed: {e}")
             return False, str(e)
 
@@ -261,6 +271,10 @@ class SimpleAI:
         return self.session.post(url, headers=headers, json=payload, stream=True)
 
     def chat(self, user_text: str, stream: bool = False) -> str:
+        self._update_circuit_breaker_state()
+        if self.circuit_breaker_active:
+            return "Circuit breaker active. Please try again later."
+
         url = f"{self.base_url}/chat/completions"
         headers = {"Content-Type": "application/json", "Authorization": "Bearer none"}
 
@@ -280,7 +294,7 @@ class SimpleAI:
             for line in response.iter_lines():
                 if line:
                     try:
-                        data = json.loads(line.decode("utf-8"))
+                        data = json.loads(line.decode("utf-8").split("data: ")[1])
                         if "choices" in data and len(data["choices"]) > 0:
                             delta = data["choices"][0].get("delta", {})
                             content = delta.get("content", "")
@@ -288,7 +302,7 @@ class SimpleAI:
                                 assistant += content
                                 sys.stdout.write(content)
                                 sys.stdout.flush()
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, IndexError):
                         continue
             # Update conversation after stream completes
             self.conversation.append({"role": "user", "content": user_text})
@@ -363,8 +377,8 @@ class SimpleAI:
             self.save_identity(self.identity)
 
     def summarize_conversation(self) -> str:
+        self._update_circuit_breaker_state()
         if self.circuit_breaker_active:
-            logger.warning("Circuit breaker active. Skipping summarize_conversation.")
             return ""
 
         messages: List[Dict[str, str]] = [
@@ -603,6 +617,7 @@ class SimpleAI:
         return "Facts decayed and low-confidence ones removed."
 
     def self_reflect(self, assistant_reply: str) -> None:
+        self._update_circuit_breaker_state()
         if self.circuit_breaker_active:
             logger.warning("Circuit breaker active. Skipping self_reflect.")
             return
@@ -691,6 +706,7 @@ class SimpleAI:
             f.write(reflection_entry)
 
     def update_identity_from_conversation(self) -> None:
+        self._update_circuit_breaker_state()
         if self.circuit_breaker_active:
             logger.warning("Circuit breaker active. Skipping update_identity_from_conversation.")
             return
@@ -736,40 +752,68 @@ class SimpleAI:
     def handle_exit(self) -> None:
         pass
 
+    def _update_circuit_breaker_state(self) -> None:
+        if self.circuit_breaker_active and time.time() > self.circuit_breaker_end_time:
+            self.circuit_breaker_active = False
+            self.consecutive_failures = 0
+
 def main():
-    ai = SimpleAI()
+    parser = argparse.ArgumentParser(description="Run the AI agent.")
+    parser.add_argument("--base-url", default=os.getenv("BASE_URL", "http://127.0.0.1:8080/v1"), help="Base URL for the LLM API")
+    parser.add_argument("--model", default=os.getenv("MODEL", "Qwen2.5-7B-Instruct"), help="Model to use for the LLM")
+    parser.add_argument("--temperature", type=float, default=float(os.getenv("TEMPERATURE", "0.7")), help="Temperature for the LLM")
+    parser.add_argument("--max-tokens", type=int, default=int(os.getenv("MAX_TOKENS", "100")), help="Max tokens for the LLM")
+    parser.add_argument("--stream", action="store_true", help="Enable streaming mode")
+    parser.add_argument("--no-tui", action="store_true", help="Disable TUI mode")
+    args = parser.parse_args()
 
-    def tui(stdscr):
-        curses.curs_set(0)
-        stdscr.nodelay(1)
-        stdscr.timeout(100)
+    ai = SimpleAI(base_url=args.base_url, model=args.model, temperature=args.temperature, max_tokens=args.max_tokens)
 
-        user_input = ""
-        assistant_response = ""
+    if not args.no_tui:
+        def tui(stdscr):
+            curses.curs_set(0)
+            stdscr.nodelay(1)
+            stdscr.timeout(100)
 
+            user_input = ""
+            assistant_response = ""
+
+            while True:
+                stdscr.clear()
+                stdscr.addstr(0, 0, "User: ")
+                stdscr.addstr(0, 6, user_input)
+                stdscr.addstr(2, 0, "Xero: " + assistant_response)
+                stdscr.refresh()
+
+                key = stdscr.getch()
+                if key == curses.KEY_ENTER or key == 10:
+                    if user_input.strip():
+                        if user_input.startswith('/'):
+                            response = ai.handle_command(user_input)
+                            if response == "__EXIT__":
+                                break
+                            assistant_response = response
+                        else:
+                            assistant_response = ai.chat(user_input, stream=args.stream)
+                        user_input = ""
+                    else:
+                        assistant_response = ""
+                elif key == curses.KEY_BACKSPACE or key == 127:
+                    user_input = user_input[:-1]
+                elif key >= 32 and key <= 126:
+                    user_input += chr(key)
+
+        curses.wrapper(tui)
+    else:
         while True:
-            stdscr.clear()
-            stdscr.addstr(0, 0, "User: ")
-            stdscr.addstr(0, 6, user_input)
-            stdscr.addstr(2, 0, "Xero: " + assistant_response)
-            stdscr.refresh()
-
-            key = stdscr.getch()
-            if key == curses.KEY_ENTER or key == 10:
-                if user_input.strip():
-                    assistant_response = ai.chat(user_input)
-                    user_input = ""
-                else:
-                    assistant_response = ""
-            elif key == curses.KEY_BACKSPACE or key == 127:
-                user_input = user_input[:-1]
-            elif key != -1:
-                user_input += chr(key)
-
-            if user_input in ("/exit", "/quit"):
-                break
-
-    curses.wrapper(tui)
+            user_input = input("User: ")
+            if user_input.startswith('/'):
+                response = ai.handle_command(user_input)
+                if response == "__EXIT__":
+                    break
+                print("Xero:", response)
+            else:
+                print("Xero:", ai.chat(user_input, stream=args.stream))
 
 if __name__ == "__main__":
     main()
