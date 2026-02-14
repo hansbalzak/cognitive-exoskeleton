@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 import threading
 import time
+import curses
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -748,16 +749,35 @@ class SimpleAI:
 def main():
     ai = SimpleAI()
 
-    try:
+    def tui(stdscr):
+        curses.curs_set(0)
+        stdscr.nodelay(1)
+        stdscr.timeout(100)
+
         while True:
-            user_input = input("User: ")
+            stdscr.clear()
+            stdscr.addstr(0, 0, "User: ")
+            user_input = ""
+            while True:
+                key = stdscr.getch()
+                if key == curses.KEY_ENTER or key == 10:
+                    break
+                elif key == curses.KEY_BACKSPACE or key == 127:
+                    user_input = user_input[:-1]
+                elif key != -1:
+                    user_input += chr(key)
+                stdscr.addstr(0, 6, user_input)
+                stdscr.refresh()
+
             if user_input in ("/exit", "/quit"):
                 break
+
             response = ai.chat(user_input)
-            print(f"Assistant: {response}")
-            ai.self_reflect(response)
-    finally:
-        ai.handle_exit()
+            stdscr.addstr(2, 0, "Assistant: " + response)
+            stdscr.refresh()
+            time.sleep(1)
+
+    curses.wrapper(tui)
 
 if __name__ == "__main__":
     main()
