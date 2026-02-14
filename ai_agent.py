@@ -18,6 +18,9 @@ import signal
 import uuid
 import logging
 from logging.handlers import RotatingFileHandler
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -620,7 +623,7 @@ class SimpleAI:
             rest = cmd[len("/write ") :].strip()
             parts = rest.split(" ", 1)
             if len(parts) != 2:
-                return "Usage: /write <path> <content>"
+                return "Usage: /write <path> <text>"
             path, content = parts[0], parts[1]
             if not self.config["allow_write"]:
                 return "ERROR: Writing is not allowed."

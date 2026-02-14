@@ -1,5 +1,6 @@
 import pytest
 from ai_agent import SimpleAI
+import time
 
 def test_circuit_breaker():
     ai = SimpleAI(base_url="", model="", temperature=0.0, max_tokens=100)
