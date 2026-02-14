@@ -421,7 +421,11 @@ class SimpleAI:
             for line in response.iter_lines():
                 if line:
                     try:
-                        data = json.loads(line.decode("utf-8").split("data: ")[1])
+                        text = line.decode("utf-8").strip()
+                        if not text.startswith("data:"):
+                            continue
+                        payload = text[5:].strip()
+                        data = json.loads(payload)
                         if "choices" in data and len(data["choices"]) > 0:
                             delta = data["choices"][0].get("delta", {})
                             content = delta.get("content", "")
@@ -478,10 +482,10 @@ class SimpleAI:
 
             # Extract and store claims
             new_claims = self.extract_claims(assistant)
-            if new_claims:
-                self.append_claims(new_claims)
-                self.rewrite_claims(self.claims[-500:])
-                print(f"(logged {len(new_claims)} claims; /claims to view)")
+            # Removed duplicate claim persistence
+            # if new_claims:
+            #     self.append_claims(new_claims)
+            #     self.rewrite_claims(self.claims[-500:])
 
             self.log_event("assistant_response_generated", {"length": len(assistant), "hash": _hash_content(assistant)}, trace_id=self.trace_id)
             return assistant
