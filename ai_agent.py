@@ -109,16 +109,6 @@ class SimpleAI:
         self.self_reflection_log_path = self.repo_root / "self_reflection.log"
         self.lockfile_path = self.repo_root / "agent.lock"
 
-        # Check for lockfile
-        if self.lockfile_path.exists():
-            # Check if the lockfile is older than 5 minutes
-            if datetime.now() - datetime.fromtimestamp(self.lockfile_path.stat().st_mtime) > timedelta(minutes=5):
-                logger.warning("Old lockfile found. Removing it.")
-                self.lockfile_path.unlink()
-            else:
-                print("Agent is already running. Exiting.")
-                sys.exit(1)
-
         # Create lockfile
         self.lockfile_path.touch()
 
@@ -143,6 +133,9 @@ class SimpleAI:
         # Register signal handler to remove lockfile on exit
         signal.signal(signal.SIGINT, self.handle_exit)
         signal.signal(signal.SIGTERM, self.handle_exit)
+
+        # Initialize user message count
+        self.user_message_count = 0
 
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
