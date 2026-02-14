@@ -15,10 +15,7 @@ import threading
 import time
 import curses
 import signal
-
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import uuid
 import logging
 from logging.handlers import RotatingFileHandler
 
@@ -34,6 +31,10 @@ handler = RotatingFileHandler('logs/agent.log', maxBytes=1024*1024*5, backupCoun
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
 logger.addHandler(handler)
+
+# Ensure traces directory exists
+traces_dir = Path("traces")
+traces_dir.mkdir(parents=True, exist_ok=True)
 
 # --- Optional sandbox tools (no-crash fallback) ---
 try:
@@ -108,12 +109,16 @@ class SimpleAI:
         self.identity_path = self.repo_root / "identity.json"
         self.self_reflection_log_path = self.repo_root / "self_reflection.log"
         self.claims_path = self.repo_root / "claims.jsonl"
+        self.config_path = self.repo_root / "config.json"
+        self.eval_prompts_path = self.repo_root / "eval/prompts.jsonl"
+        self.eval_results_path = self.repo_root / "eval/results.jsonl"
 
         self.ensure_personality_file()
         self.ensure_profile_and_facts()
         self.conversation: List[Dict[str, str]] = self.load_conversation()
         self.identity = self.load_identity()
         self.claims = self.load_claims()
+        self.config = self.load_config()
 
         # Repo search index (lazy)
         self._index_built = False
@@ -134,6 +139,9 @@ class SimpleAI:
 
         # Initialize user message count
         self.user_message_count = 0
+
+        # Trace ID
+        self.trace_id = str(uuid.uuid4())[:8]
 
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
@@ -253,6 +261,20 @@ class SimpleAI:
             for claim in claims:
                 f.write(json.dumps(claim, ensure_ascii=False) + "\n")
         temp_path.rename(self.claims_path)
+
+    def load_config(self) -> Dict[str, Any]:
+        config = _safe_load_json(self.config_path, default={
+            "allow_write": False,
+            "allow_run": False,
+            "allow_network_readonly": True
+        })
+        if not isinstance(config, dict):
+            config = {
+                "allow_write": False,
+                "allow_run": False,
+                "allow_network_readonly": True
+            }
+        return config
 
     # --------- LLM chat ---------
     def _post_chat(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int, stream: bool = False) -> Tuple[bool, Any]:
@@ -543,6 +565,7 @@ class SimpleAI:
                 "  /correct <id> <note>  Mark claim corrected; store note; reduce confidence strongly",
                 "  /retract <id> <note>  Mark claim retracted; confidence to 0",
                 "  /verify <id>          Ask the LLM to self-check the claim using only repo snippets (from /askrepo) + known facts; then update confidence/status accordingly (soft-fail if not enough evidence)",
+                "  /eval                 Run evaluation prompts and store results",
             ]
         )
 
@@ -599,6 +622,8 @@ class SimpleAI:
             if len(parts) != 2:
                 return "Usage: /write <path> <content>"
             path, content = parts[0], parts[1]
+            if not self.config["allow_write"]:
+                return "ERROR: Writing is not allowed."
             if not self._approve(f"write_file({path}, <{len(content)} chars>)"):
                 return "Canceled."
             return write_file(path, content)
@@ -611,6 +636,8 @@ class SimpleAI:
             command_name, args = parts[0], parts[1:]
             if command_name not in {"ls", "cat", "git", "python3", "pip", "grep"}:
                 return "ERROR: Command not allowed."
+            if not self.config["allow_run"]:
+                return "ERROR: Running commands is not allowed."
             if not self._approve(f"run_shell({command_name} {' '.join(args)})"):
                 return "Canceled."
             return run_shell(command_name, args)
@@ -676,6 +703,9 @@ class SimpleAI:
                 return self.verify_claim(int(raw))
             except Exception:
                 return "Usage: /verify <id>"
+
+        if cmd == "/eval":
+            return self.eval_prompts()
 
         return "Unknown command. Type /help."
 
@@ -805,7 +835,7 @@ class SimpleAI:
             {"role": "user", "content": json.dumps(self.conversation[-20:])}
         ]
 
-        ok, response = self._post_chat(messages, self.temperature, 200, stream=False)
+        ok, response = self._post_chat(messages, 0.2, 200, stream=False)
         if not ok:
             logger.error(f"Failed to update identity: {response}")
             return
@@ -1003,6 +1033,56 @@ class SimpleAI:
             for claim in relevant_claims[:10]
         ])
         return f"Known Corrections:\n{corrections}\n"
+
+    def eval_prompts(self) -> str:
+        if not self.eval_prompts_path.exists():
+            return "No eval/prompts.jsonl found."
+
+        prompts = []
+        for line in self.eval_prompts_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+                if isinstance(obj, dict) and "prompt" in obj:
+                    prompts.append(obj["prompt"])
+            except Exception:
+                continue
+
+        if not prompts:
+            return "No valid prompts found."
+
+        results = []
+        for prompt in prompts:
+            start_time = time.time()
+            response = self.chat(prompt, stream=False)
+            end_time = time.time()
+            duration = end_time - start_time
+
+            # Simple self-score rubric
+            score = 0
+            if "correct" in response.lower():
+                score += 1
+            if "helpful" in response.lower():
+                score += 1
+            if "clear" in response.lower():
+                score += 1
+
+            result = {
+                "trace_id": self.trace_id,
+                "prompt": prompt,
+                "response": response,
+                "score": score,
+                "duration": duration
+            }
+            results.append(result)
+
+        with self.eval_results_path.open("a", encoding="utf-8") as f:
+            for result in results:
+                f.write(json.dumps(result, ensure_ascii=False) + "\n")
+
+        return "Evaluation completed. Results stored in eval/results.jsonl."
 
 def main():
     parser = argparse.ArgumentParser(description="Run the AI agent.")

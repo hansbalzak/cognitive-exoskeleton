@@ -1,0 +1,5 @@
+{
+    "allow_write": false,
+    "allow_run": false,
+    "allow_network_readonly": true
+}
