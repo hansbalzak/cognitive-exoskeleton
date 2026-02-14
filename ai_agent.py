@@ -131,12 +131,6 @@ class SimpleAI:
         self._index_built = False
         self.index: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
 
-        # Hardware acceleration setup
-        self._setup_hardware_acceleration()
-
-        # Message counter
-        self.user_message_count = 0
-
         # Circuit breaker
         self.consecutive_failures = 0
         self.circuit_breaker_active = False
@@ -597,11 +591,6 @@ class SimpleAI:
             return True
         ans = input(f"About to run {label}. Proceed? (y/n) ").strip().lower()
         return ans in ("y", "yes")
-
-    def _setup_hardware_acceleration(self) -> None:
-        # Placeholder for hardware acceleration setup
-        # This can be expanded based on specific hardware acceleration needs
-        print("Hardware acceleration setup complete.")
 
     def decay_facts(self) -> str:
         facts = self.load_facts()
