@@ -21,6 +21,7 @@ from logging.handlers import RotatingFileHandler
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+import hashlib
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -38,6 +39,14 @@ logger.addHandler(handler)
 # Ensure traces directory exists
 traces_dir = Path("traces")
 traces_dir.mkdir(parents=True, exist_ok=True)
+
+# Ensure events directory exists
+events_dir = Path("events")
+events_dir.mkdir(parents=True, exist_ok=True)
+
+# Ensure failures directory exists
+failures_dir = Path("failures")
+failures_dir.mkdir(parents=True, exist_ok=True)
 
 # --- Optional sandbox tools (no-crash fallback) ---
 try:
@@ -89,12 +98,18 @@ def _atomic_write_text(path: Path, content: str) -> None:
     temp_path.rename(path)
 
 
+def _hash_content(content: str) -> str:
+    return hashlib.sha256(content.encode('utf-8')).hexdigest()
+
+
 class SimpleAI:
-    def __init__(self, base_url: str, model: str, temperature: float, max_tokens: int):
+    def __init__(self, base_url: str, model: str, temperature: float, max_tokens: int, privacy_mode: bool, supervisor: bool):
         self.base_url = base_url
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.privacy_mode = privacy_mode
+        self.supervisor = supervisor
 
         self.session = requests.Session()
         self.session.headers.update({"Connection": "keep-alive"})
@@ -115,6 +130,10 @@ class SimpleAI:
         self.config_path = self.repo_root / "config.json"
         self.eval_prompts_path = self.repo_root / "eval/prompts.jsonl"
         self.eval_results_path = self.repo_root / "eval/results.jsonl"
+        self.events_path = self.repo_root / "events.jsonl"
+        self.failures_path = self.repo_root / "failures.jsonl"
+        self.state_path = self.repo_root / "state.json"
+        self.identity_freeze_path = self.repo_root / "identity_freeze.json"
 
         self.ensure_personality_file()
         self.ensure_profile_and_facts()
@@ -122,6 +141,7 @@ class SimpleAI:
         self.identity = self.load_identity()
         self.claims = self.load_claims()
         self.config = self.load_config()
+        self.identity_freeze = self.load_identity_freeze()
 
         # Repo search index (lazy)
         self._index_built = False
@@ -136,12 +156,24 @@ class SimpleAI:
         self.reflect_counter = 0
         self.reflect_interval = 5
 
+        # Supervisor loop
+        self.supervisor_thread = None
+        self.supervisor_interval = 30
+        self.degraded_mode = False
+
         # Register signal handler to remove lockfile on exit
         signal.signal(signal.SIGINT, self.handle_exit)
         signal.signal(signal.SIGTERM, self.handle_exit)
 
         # Initialize user message count
         self.user_message_count = 0
+
+        # Load state
+        self.load_state()
+
+        # Start supervisor if enabled
+        if self.supervisor:
+            self.start_supervisor()
 
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
@@ -170,6 +202,7 @@ class SimpleAI:
 
     def save_conversation(self) -> None:
         _atomic_write_json(self.conversation_path, self.conversation)
+        self.log_event("conversation_saved", {"length": len(self.conversation)})
 
     def clear_conversation(self) -> str:
         self.conversation = []
@@ -205,6 +238,7 @@ class SimpleAI:
         with self.facts_path.open("w", encoding="utf-8") as f:
             for fact in facts:
                 f.write(json.dumps(fact, ensure_ascii=False) + "\n")
+        self.log_event("facts_saved", {"length": len(facts)})
 
     def load_identity(self) -> Dict[str, Any]:
         identity = _safe_load_json(self.identity_path, default={
@@ -230,6 +264,7 @@ class SimpleAI:
 
     def save_identity(self, identity: Dict[str, Any]) -> None:
         _atomic_write_json(self.identity_path, identity)
+        self.log_event("identity_saved", identity)
 
     def validate_identity(self, identity: Dict[str, Any]) -> bool:
         return isinstance(identity, dict) and "style" in identity and "values" in identity and "preferences" in identity and "name" in identity
@@ -254,6 +289,7 @@ class SimpleAI:
         with self.claims_path.open("a", encoding='utf-8') as f:
             for claim in claims:
                 f.write(json.dumps(claim, ensure_ascii=False) + "\n")
+        self.log_event("claims_added", {"length": len(claims)})
 
     def rewrite_claims(self, claims: List[Dict[str, Any]]) -> None:
         temp_path = self.claims_path.with_suffix('.tmp')
@@ -261,20 +297,54 @@ class SimpleAI:
             for claim in claims:
                 f.write(json.dumps(claim, ensure_ascii=False) + "\n")
         temp_path.rename(self.claims_path)
+        self.log_event("claims_rewritten", {"length": len(claims)})
 
     def load_config(self) -> Dict[str, Any]:
         config = _safe_load_json(self.config_path, default={
             "allow_write": False,
             "allow_run": False,
-            "allow_network_readonly": True
+            "allow_network_readonly": True,
+            "privacy_mode": True
         })
         if not isinstance(config, dict):
             config = {
                 "allow_write": False,
                 "allow_run": False,
-                "allow_network_readonly": True
+                "allow_network_readonly": True,
+                "privacy_mode": True
             }
         return config
+
+    def load_identity_freeze(self) -> Dict[str, Any]:
+        identity_freeze = _safe_load_json(self.identity_freeze_path, default={
+            "freeze_values": True,
+            "freeze_name": True,
+            "freeze_core_preferences": True
+        })
+        if not isinstance(identity_freeze, dict):
+            identity_freeze = {
+                "freeze_values": True,
+                "freeze_name": True,
+                "freeze_core_preferences": True
+            }
+        return identity_freeze
+
+    def load_state(self) -> None:
+        state = _safe_load_json(self.state_path, default={
+            "last_reflect_ts": None,
+            "message_count_since_reflect": 0
+        })
+        if isinstance(state, dict):
+            self.last_reflect_ts = state.get("last_reflect_ts")
+            self.message_count_since_reflect = state.get("message_count_since_reflect", 0)
+
+    def save_state(self) -> None:
+        state = {
+            "last_reflect_ts": self.last_reflect_ts,
+            "message_count_since_reflect": self.message_count_since_reflect
+        }
+        _atomic_write_json(self.state_path, state)
+        self.log_event("state_saved", state)
 
     # --------- LLM chat ---------
     def _post_chat(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int, stream: bool = False) -> Tuple[bool, Any]:
@@ -300,6 +370,7 @@ class SimpleAI:
                     self.circuit_breaker_active = True
                     self.circuit_breaker_end_time = time.time() + 30
                 logger.error(f"HTTP {response.status_code}: {response.text}")
+                self.log_event("error", {"subsystem": "LLM", "error_type": "HTTP", "message": response.text})
                 return False, response.text
         except requests.RequestException as e:
             self.consecutive_failures += 1
@@ -307,6 +378,7 @@ class SimpleAI:
                 self.circuit_breaker_active = True
                 self.circuit_breaker_end_time = time.time() + 30
             logger.error(f"Request failed: {e}")
+            self.log_event("error", {"subsystem": "LLM", "error_type": "RequestException", "message": str(e)})
             return False, str(e)
 
     def _post_chat_stream(self, messages: List[Dict[str, str]], temperature: float, max_tokens: int) -> requests.Response:
@@ -361,6 +433,7 @@ class SimpleAI:
             self.conversation.append({"role": "assistant", "content": assistant})
             self.trim_conversation()
             self.save_conversation()
+            self.log_event("assistant_response_generated", {"length": len(assistant), "hash": _hash_content(assistant)})
             return assistant
         else:
             ok, response = self._post_chat(messages, self.temperature, self.max_tokens)
@@ -397,7 +470,7 @@ class SimpleAI:
                 self.user_message_count = 0
 
             # Reflect sampling
-            if random.random() < 0.2:
+            if self.should_reflect():
                 self.self_reflect(assistant)
 
             # Extract and store claims
@@ -407,6 +480,7 @@ class SimpleAI:
                 self.rewrite_claims(self.claims[-500:])
                 print(f"(logged {len(new_claims)} claims; /claims to view)")
 
+            self.log_event("assistant_response_generated", {"length": len(assistant), "hash": _hash_content(assistant)})
             return assistant
 
     def _contains_uncertainty_markers(self, text: str) -> bool:
@@ -434,6 +508,7 @@ class SimpleAI:
                 *self.conversation[-10:]
             ]
             self.save_identity(self.identity)
+            self.log_event("conversation_summarized", {"length": len(self.conversation)})
 
     def summarize_conversation(self) -> str:
         self._update_circuit_breaker_state()
@@ -448,6 +523,7 @@ class SimpleAI:
         ok, response = self._post_chat(messages, 0.0, 200, stream=False)
         if not ok:
             logger.error(f"Failed to summarize conversation: {response}")
+            self.log_event("error", {"subsystem": "summarization", "error_type": "HTTP", "message": response})
             return ""
 
         data = response
@@ -469,12 +545,14 @@ class SimpleAI:
         }
         facts.append(new_fact)
         self.save_facts(facts)
+        self.log_event("fact_added", {"id": new_fact["id"], "fact": fact})
         return f"Fact remembered (id={new_fact['id']})."
 
     def forget_fact(self, fact_id: int) -> str:
         facts = self.load_facts()
         new_facts = [f for f in facts if int(f.get("id", -1)) != fact_id]
         self.save_facts(new_facts)
+        self.log_event("fact_removed", {"id": fact_id})
         return f"Fact forgotten (id={fact_id})."
 
     def show_profile(self) -> str:
@@ -566,6 +644,9 @@ class SimpleAI:
                 "  /retract <id> <note>  Mark claim retracted; confidence to 0",
                 "  /verify <id>          Ask the LLM to self-check the claim using only repo snippets (from /askrepo) + known facts; then update confidence/status accordingly (soft-fail if not enough evidence)",
                 "  /eval                 Run evaluation prompts and store results",
+                "  /supervisor           Enable or disable supervisor mode",
+                "  /privacy_mode         Enable or disable privacy mode",
+                "  /identity_freeze      Enable or disable identity freeze",
             ]
         )
 
@@ -707,6 +788,24 @@ class SimpleAI:
         if cmd == "/eval":
             return self.eval_prompts()
 
+        if cmd == "/supervisor":
+            self.supervisor = not self.supervisor
+            if self.supervisor:
+                self.start_supervisor()
+            else:
+                self.stop_supervisor()
+            return f"Supervisor mode {'enabled' if self.supervisor else 'disabled'}."
+
+        if cmd == "/privacy_mode":
+            self.config["privacy_mode"] = not self.config["privacy_mode"]
+            self.save_config()
+            return f"Privacy mode {'enabled' if self.config['privacy_mode'] else 'disabled'}."
+
+        if cmd == "/identity_freeze":
+            self.identity_freeze = not self.identity_freeze
+            self.save_identity_freeze()
+            return f"Identity freeze {'enabled' if self.identity_freeze else 'disabled'}."
+
         return "Unknown command. Type /help."
 
     def _approve(self, label: str) -> bool:
@@ -733,12 +832,14 @@ class SimpleAI:
                 updated_facts.append(fact)
 
         self.save_facts(updated_facts)
+        self.log_event("facts_decayed", {"length": len(updated_facts)})
         return "Facts decayed and low-confidence ones removed."
 
     def self_reflect(self, assistant_reply: str) -> None:
         self._update_circuit_breaker_state()
-        if self.circuit_breaker_active:
-            logger.warning("Circuit breaker active. Skipping self_reflect.")
+        if self.circuit_breaker_active or self.degraded_mode:
+            logger.warning("Circuit breaker active or degraded mode. Skipping self_reflect.")
+            self.log_event("self_reflect_skipped", {"reason": "circuit_breaker_active or degraded_mode"})
             return
 
         messages: List[Dict[str, str]] = [
@@ -749,6 +850,7 @@ class SimpleAI:
         ok, response = self._post_chat(messages, 0.0, 120, stream=False)
         if not ok:
             logger.error(f"Failed to self-reflect: {response}")
+            self.log_event("error", {"subsystem": "self_reflect", "error_type": "HTTP", "message": response})
             return
 
         data = response
@@ -764,9 +866,11 @@ class SimpleAI:
                 memory_suggestion = reflection["memory_suggestion"]
             else:
                 print("Invalid reflection JSON received.")
+                self.log_event("invalid_reflection", {"assistant_reply": assistant_reply})
                 return
         except json.JSONDecodeError:
             logger.error("Failed to decode JSON from reflection response.")
+            self.log_event("error", {"subsystem": "self_reflect", "error_type": "JSONDecodeError", "message": "Failed to decode JSON from reflection response."})
             return
 
         # Log the reflection
@@ -782,6 +886,8 @@ class SimpleAI:
         # If memory_suggestion is non-empty, call remember_fact
         if memory_suggestion:
             self.remember_fact(memory_suggestion)
+
+        self.log_event("self_reflected", {"quality": quality, "uncertainty": uncertainty, "memory_suggestion": memory_suggestion})
 
     def fallback_reflect(self, assistant_reply: str) -> None:
         quality = "Good"
@@ -826,8 +932,9 @@ class SimpleAI:
 
     def update_identity_from_conversation(self) -> None:
         self._update_circuit_breaker_state()
-        if self.circuit_breaker_active:
-            logger.warning("Circuit breaker active. Skipping update_identity_from_conversation.")
+        if self.circuit_breaker_active or self.degraded_mode:
+            logger.warning("Circuit breaker active or degraded mode. Skipping identity update.")
+            self.log_event("identity_update_skipped", {"reason": "circuit_breaker_active or degraded_mode"})
             return
 
         messages: List[Dict[str, str]] = [
@@ -838,6 +945,7 @@ class SimpleAI:
         ok, response = self._post_chat(messages, 0.2, 200, stream=False)
         if not ok:
             logger.error(f"Failed to update identity: {response}")
+            self.log_event("error", {"subsystem": "identity_update", "error_type": "HTTP", "message": response})
             return
 
         data = response
@@ -848,12 +956,25 @@ class SimpleAI:
         try:
             new_identity = json.loads(assistant)
             if self.validate_identity(new_identity):
-                self.identity = new_identity
-                self.save_identity(new_identity)
+                if self.identity_freeze["freeze_values"]:
+                    new_identity["values"] = self.identity["values"]
+                if self.identity_freeze["freeze_name"]:
+                    new_identity["name"] = self.identity["name"]
+                if self.identity_freeze["freeze_core_preferences"]:
+                    new_identity["preferences"] = self.identity["preferences"]
+
+                if new_identity != self.identity:
+                    self.identity = new_identity
+                    self.save_identity(new_identity)
+                    self.log_event("identity_updated", {"diff": {k: (self.identity[k], new_identity[k]) for k in self.identity if self.identity[k] != new_identity[k]}})
+                else:
+                    self.log_event("identity_update_skipped", {"reason": "no_changes"})
             else:
                 logger.warning("Invalid identity JSON received.")
+                self.log_event("invalid_identity", {"assistant_response": assistant})
         except json.JSONDecodeError:
             logger.error("Failed to decode JSON from identity update response.")
+            self.log_event("error", {"subsystem": "identity_update", "error_type": "JSONDecodeError", "message": "Failed to decode JSON from identity update response."})
 
     def health_check(self) -> str:
         url = f"{self.base_url}/models"
@@ -862,23 +983,33 @@ class SimpleAI:
         try:
             response = self.session.get(url, headers=headers, timeout=(10, 120))
             if response.status_code == 200:
+                self.degraded_mode = False
+                self.log_event("supervisor_health_check", {"status": "OK"})
                 return "OK"
             else:
+                self.degraded_mode = True
+                self.log_event("supervisor_health_check", {"status": "FAIL", "http_status": response.status_code})
                 return f"FAIL: HTTP {response.status_code}"
         except requests.RequestException as e:
+            self.degraded_mode = True
+            self.log_event("supervisor_health_check", {"status": "FAIL", "error": str(e)})
             return f"FAIL: {e}"
 
     def handle_exit(self, *args) -> None:
-        pass
+        if self.supervisor_thread:
+            self.supervisor_thread.join()
 
     def _update_circuit_breaker_state(self) -> None:
         if self.circuit_breaker_active and time.time() > self.circuit_breaker_end_time:
             self.circuit_breaker_active = False
             self.consecutive_failures = 0
+            self.log_event("circuit_breaker_recovered", {})
 
     def extract_claims(self, assistant_reply: str) -> List[Dict[str, Any]]:
         self._update_circuit_breaker_state()
-        if self.circuit_breaker_active:
+        if self.circuit_breaker_active or self.degraded_mode:
+            logger.warning("Circuit breaker active or degraded mode. Skipping claim extraction.")
+            self.log_event("claim_extraction_skipped", {"reason": "circuit_breaker_active or degraded_mode"})
             return []
 
         messages: List[Dict[str, str]] = [
@@ -889,6 +1020,7 @@ class SimpleAI:
         ok, response = self._post_chat(messages, 0.0, 100, stream=False)
         if not ok:
             logger.error(f"Failed to extract claims: {response}")
+            self.log_event("error", {"subsystem": "claim_extraction", "error_type": "HTTP", "message": response})
             return []
 
         data = response
@@ -915,12 +1047,15 @@ class SimpleAI:
                     new_claims.append(new_claim)
                 self.claims.extend(new_claims)
                 self.rewrite_claims(self.claims[-500:])
+                self.log_event("claims_extracted", {"length": len(new_claims)})
                 return new_claims
             else:
                 logger.warning("Invalid claims JSON received.")
+                self.log_event("invalid_claims", {"assistant_reply": assistant_reply})
                 return []
         except json.JSONDecodeError:
             logger.error("Failed to decode JSON from claims extraction response.")
+            self.log_event("error", {"subsystem": "claim_extraction", "error_type": "JSONDecodeError", "message": "Failed to decode JSON from claims extraction response."})
             return []
 
     def list_claims(self, n: int = 10) -> str:
@@ -963,6 +1098,7 @@ class SimpleAI:
                         "new_status": "corrected"
                     })
                     self.rewrite_claims(self.claims)
+                    self.log_event("claim_corrected", {"id": claim_id, "note": note})
                     return f"Claim {claim_id} corrected. Confidence reduced to {claim['confidence']:.2f}."
                 else:
                     return f"Claim {claim_id} is already {claim['status']}."
@@ -980,6 +1116,7 @@ class SimpleAI:
                         "new_status": "retracted"
                     })
                     self.rewrite_claims(self.claims)
+                    self.log_event("claim_retracted", {"id": claim_id, "note": note})
                     return f"Claim {claim_id} retracted. Confidence set to 0.0."
                 else:
                     return f"Claim {claim_id} is already {claim['status']}."
@@ -1000,6 +1137,7 @@ class SimpleAI:
                 ok, response = self._post_chat(messages, 0.0, 200, stream=False)
                 if not ok:
                     logger.error(f"Failed to verify claim: {response}")
+                    self.log_event("error", {"subsystem": "claim_verification", "error_type": "HTTP", "message": response})
                     return f"Failed to verify claim {claim_id}."
 
                 data = response
@@ -1024,12 +1162,15 @@ class SimpleAI:
                             "new_status": claim["status"]
                         })
                         self.rewrite_claims(self.claims)
+                        self.log_event("claim_verified", {"id": claim_id, "verified": verified, "note": note})
                         return f"Claim {claim_id} verified. Status: {claim['status']}, Confidence: {claim['confidence']:.2f}."
                     else:
                         logger.warning("Invalid verification JSON received.")
+                        self.log_event("invalid_verification", {"claim_id": claim_id, "assistant_response": assistant})
                         return f"Invalid verification response for claim {claim_id}."
                 except json.JSONDecodeError:
                     logger.error("Failed to decode JSON from verification response.")
+                    self.log_event("error", {"subsystem": "claim_verification", "error_type": "JSONDecodeError", "message": "Failed to decode JSON from verification response."})
                     return f"Failed to decode JSON for claim {claim_id}."
         return "Claim not found."
 
@@ -1098,23 +1239,106 @@ class SimpleAI:
             for result in results:
                 f.write(json.dumps(result, ensure_ascii=False) + "\n")
 
+        self.log_event("eval_completed", {"length": len(results)})
         return "Evaluation completed. Results stored in eval/results.jsonl."
 
-    def log_trace(self, user_text: str, assistant_response: str, errors: List[str] = []) -> None:
-        trace_entry = {
-            "trace_id": self.trace_id,
-            "timestamp": datetime.now().isoformat(),
-            "model": self.model,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-            "user_text_length": len(user_text),
-            "assistant_response_length": len(assistant_response),
-            "circuit_breaker_active": self.circuit_breaker_active,
-            "errors": errors
+    def log_event(self, event_type: str, payload: Dict[str, Any], trace_id: str = None) -> None:
+        event = {
+            "ts": datetime.now().isoformat(),
+            "trace_id": trace_id,
+            "event_type": event_type,
+            "payload": payload
         }
-        trace_file = traces_dir / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
-        with trace_file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(trace_entry, ensure_ascii=False) + "\n")
+        with self.events_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+
+    def log_failure(self, subsystem: str, error_type: str, message: str, note: str = "", mitigation: str = "") -> None:
+        failure = {
+            "ts": datetime.now().isoformat(),
+            "subsystem": subsystem,
+            "error_type": error_type,
+            "message": message,
+            "note": note,
+            "mitigation": mitigation
+        }
+        with self.failures_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(failure, ensure_ascii=False) + "\n")
+
+    def should_reflect(self) -> bool:
+        if self.user_message_count >= 8 or (time.time() - self.last_reflect_ts) >= 60 * 60:
+            self.last_reflect_ts = time.time()
+            self.message_count_since_reflect = 0
+            self.save_state()
+            return True
+        return False
+
+    def start_supervisor(self) -> None:
+        self.supervisor_thread = threading.Thread(target=self.supervisor_loop, daemon=True)
+        self.supervisor_thread.start()
+
+    def stop_supervisor(self) -> None:
+        if self.supervisor_thread:
+            self.supervisor_thread.join()
+            self.supervisor_thread = None
+
+    def supervisor_loop(self) -> None:
+        while self.supervisor:
+            self.health_check()
+            self.sanity_check()
+            time.sleep(self.supervisor_interval)
+
+    def sanity_check(self) -> None:
+        try:
+            self.validate_json_state_files()
+        except Exception as e:
+            self.log_event("sanity_check_failed", {"error": str(e)})
+
+    def validate_json_state_files(self) -> None:
+        state_files = [
+            self.conversation_path,
+            self.facts_path,
+            self.claims_path,
+            self.identity_path
+        ]
+
+        for file_path in state_files:
+            try:
+                _safe_load_json(file_path, default={})
+            except Exception as e:
+                self.log_event("file_corruption_detected", {"file_path": str(file_path), "error": str(e)})
+                self.recover_corrupted_file(file_path)
+
+    def recover_corrupted_file(self, file_path: Path) -> None:
+        backup_path = file_path.with_suffix('.corrupt-' + datetime.now().isoformat())
+        file_path.rename(backup_path)
+        self.log_event("file_recovered", {"original_path": str(file_path), "backup_path": str(backup_path)})
+        self.create_minimal_safe_default(file_path)
+
+    def create_minimal_safe_default(self, file_path: Path) -> None:
+        if file_path == self.conversation_path:
+            _ensure_file(file_path, json.dumps([], indent=2))
+        elif file_path == self.facts_path:
+            _ensure_file(file_path, "")
+        elif file_path == self.claims_path:
+            _ensure_file(file_path, "")
+        elif file_path == self.identity_path:
+            _ensure_file(file_path, json.dumps({
+                "style": "friendly and approachable",
+                "values": ["respect boundaries", "stay on topic", "be polite and professional", "provide clear and concise answers", "encourage learning"],
+                "preferences": {
+                    "language": "English",
+                    "timezone": "UTC"
+                },
+                "name": "Xero"
+            }, indent=2))
+
+    def save_config(self) -> None:
+        _atomic_write_json(self.config_path, self.config)
+        self.log_event("config_saved", self.config)
+
+    def save_identity_freeze(self) -> None:
+        _atomic_write_json(self.identity_freeze_path, self.identity_freeze)
+        self.log_event("identity_freeze_saved", self.identity_freeze)
 
 def main():
     parser = argparse.ArgumentParser(description="Run the AI agent.")
@@ -1124,9 +1348,11 @@ def main():
     parser.add_argument("--max-tokens", type=int, default=int(os.getenv("MAX_TOKENS", "100")), help="Max tokens for the LLM")
     parser.add_argument("--stream", action="store_true", help="Enable streaming mode")
     parser.add_argument("--no-tui", action="store_true", help="Disable TUI mode")
+    parser.add_argument("--privacy-mode", action="store_true", default=True, help="Enable privacy mode (log only hashes/lengths)")
+    parser.add_argument("--supervisor", action="store_true", default=False, help="Enable supervisor mode")
     args = parser.parse_args()
 
-    ai = SimpleAI(base_url=args.base_url, model=args.model, temperature=args.temperature, max_tokens=args.max_tokens)
+    ai = SimpleAI(base_url=args.base_url, model=args.model, temperature=args.temperature, max_tokens=args.max_tokens, privacy_mode=args.privacy_mode, supervisor=args.supervisor)
 
     if not args.no_tui:
         def tui(stdscr):
