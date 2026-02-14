@@ -143,9 +143,6 @@ class SimpleAI:
         # Initialize user message count
         self.user_message_count = 0
 
-        # Trace ID
-        self.trace_id = str(uuid.uuid4())[:8]
-
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
         if not self.personality_path.exists():
@@ -917,7 +914,6 @@ class SimpleAI:
                     }
                     new_claims.append(new_claim)
                 self.claims.extend(new_claims)
-                self.append_claims(new_claims)
                 self.rewrite_claims(self.claims[-500:])
                 return new_claims
             else:
@@ -998,7 +994,7 @@ class SimpleAI:
                 messages: List[Dict[str, str]] = [
                     {"role": "system", "content": "Verify the following claim using only the provided repo snippets and known facts. Return ONLY valid JSON with keys: verified (bool), note (str). Do not include any other text or explanations."},
                     {"role": "user", "content": claim["claim"]},
-                    {"role": "user", "content": "Repo snippets:\n" + "\n".join([f"File: {rel_path}, Line: {line_no}, Context: {context}" for rel_path, line_no, context in self.search_repo(claim["topic"])[:10]])}
+                    {"role": "user", "content": "Repo snippets:\n" + "\n".join([f"File: {rel_path}, Line: {line_no}, Context: {context}" for rel_path, line_no, context in self.search_repo(claim["claim"])[:10]])}
                 ]
 
                 ok, response = self._post_chat(messages, 0.0, 200, stream=False)
