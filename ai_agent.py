@@ -175,6 +175,9 @@ class SimpleAI:
         if self.supervisor:
             self.start_supervisor()
 
+        # Initialize last_reflect_ts to current time
+        self.last_reflect_ts = time.time()
+
     # --------- Persistence ---------
     def ensure_personality_file(self) -> None:
         if not self.personality_path.exists():
@@ -335,7 +338,7 @@ class SimpleAI:
             "message_count_since_reflect": 0
         })
         if isinstance(state, dict):
-            self.last_reflect_ts = state.get("last_reflect_ts")
+            self.last_reflect_ts = state.get("last_reflect_ts", time.time())  # Initialize to current time if None
             self.message_count_since_reflect = state.get("message_count_since_reflect", 0)
 
     def save_state(self) -> None:
