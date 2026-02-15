@@ -3,21 +3,16 @@
   <img src="assets/cogex.jpg" width="600">
 </p>
 
-⚠️ LICENSED UNDER A STRICT NON-COMMERCIAL RESEARCH LICENSE  
-See LICENSE: https://raw.githubusercontent.com/hansbalzak/aiagentproject/main/license.md
+## License
 
-Personal, educational, research and internal evaluation use is allowed.
+This project is licensed under the GNU Affero General Public License v3 (AGPLv3).
 
-Commercial use is strictly prohibited, including but not limited to products,
-SaaS, consulting, monetization, or revenue-generating systems.
+If you run this software as a service or expose it over a network, you are
+required to provide the complete corresponding source code of your version.
 
-Attribution is mandatory.
+This project is intended as commons software: local-first, open, and non-extractive.
 
-Any organization or legal entity using this software in any capacity must notify:
-winkels@solardrifts.com
-
-Unauthorized commercial use constitutes a material breach of license terms.
-
+### About project:
 This project is an experimental local cognitive architecture focused on:
 - self-correction
 - persistence
