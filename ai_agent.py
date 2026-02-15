@@ -23,6 +23,11 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import hashlib
 
+# Linux/AMD guardrails
+if not (os.uname().sysname == "Linux" and "AMD" in os.uname().machine):
+    print("This script is only allowed to run on Linux/AMD systems.")
+    sys.exit(1)
+
 # Setup logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -1375,11 +1380,16 @@ class SimpleAI:
         self.log_event("trace_logged", {"trace_id": trace_id})
 
 def main():
+    # Linux/AMD guardrails
+    if not (os.uname().sysname == "Linux" and "AMD" in os.uname().machine):
+        print("This script is only allowed to run on Linux/AMD systems.")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser(description="Run the AI agent.")
     parser.add_argument("--base-url", default=os.getenv("BASE_URL", "http://127.0.0.1:8080/v1"), help="Base URL for the LLM API")
-    parser.add_argument("--model", default=os.getenv("MODEL", "Qwen2.5-7B-Instruct"), help="Model to use for the LLM")
+    parser.add_argument("--model", default=os.getenv("MODEL", "local"), help="Model to use for the LLM")
     parser.add_argument("--temperature", type=float, default=float(os.getenv("TEMPERATURE", "0.7")), help="Temperature for the LLM")
-    parser.add_argument("--max-tokens", type=int, default=int(os.getenv("MAX_TOKENS", "100")), help="Max tokens for the LLM")
+    parser.add_argument("--max-tokens", type=int, default=int(os.getenv("MAX_TOKENS", "512")), help="Max tokens for the LLM")
     parser.add_argument("--stream", action="store_true", help="Enable streaming mode")
     parser.add_argument("--no-tui", action="store_true", help="Disable TUI mode")
     parser.add_argument("--privacy-mode", action="store_true", default=True, help="Enable privacy mode (log only hashes/lengths)")
