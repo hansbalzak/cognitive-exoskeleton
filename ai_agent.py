@@ -23,11 +23,6 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import hashlib
 
-# Linux/AMD guardrails
-# if not (os.uname().sysname == "Linux" and "AMD" in os.uname().machine):
-#     print("This script is only allowed to run on Linux/AMD systems.")
-#     sys.exit(1)
-
 # Setup logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -1380,11 +1375,6 @@ class SimpleAI:
         self.log_event("trace_logged", {"trace_id": trace_id})
 
 def main():
-    # Linux/AMD guardrails
-    # if not (os.uname().sysname == "Linux" and "AMD" in os.uname().machine):
-    #     print("This script is only allowed to run on Linux/AMD systems.")
-    #     sys.exit(1)
-
     parser = argparse.ArgumentParser(description="Run the AI agent.")
     parser.add_argument("--base-url", default=os.getenv("BASE_URL", "http://127.0.0.1:8080/v1"), help="Base URL for the LLM API")
     parser.add_argument("--model", default=os.getenv("MODEL", "local"), help="Model to use for the LLM")
