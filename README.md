@@ -3,54 +3,49 @@
   <img src="assets/cogex.jpg" width="600">
 </p>
 
-# About:
-This project is an experimental local cognitive architecture focused on:
-- self-correction
-- persistence
-- behavioral evolution
-- privacy-first operation
+## Project Principles
 
-This is not an enterprise framework.
-This is not a startup project.
-This project intentionally does not prioritize enterprise integration,
-cloud platforms, or commercial scalability.
+Cognitive Exoskeleton is built on principles of autonomy, transparency, and user sovereignty.
 
-If that is your goal, this is probably not the right project.
-# This repository may not be used for training proprietary models.
+This software is intended to be:
 
-## License
+- **Local-first:** designed to run entirely on user-controlled hardware.
+- **Privacy-preserving:** no telemetry, no cloud dependency, no centralized data collection.
+- **Commons-oriented:** contributions and improvements remain part of the public commons.
+- **Non-extractive:** not built for commercial exploitation, hidden monetization, or proprietary lock-in.
+- **Not an enterprise framework:** this is not intended as a corporate product, platform service, or hosted API.
+- **Not SaaS-oriented:** if deployed as a hosted or network-accessible service, the complete corresponding source code must be provided under the same license (AGPLv3).
 
-This project is licensed under the GNU Affero General Public License v3 (AGPLv3).
+If your goals include enterprise adoption, proprietary extensions, closed-source commercialization, 
+or building a paid platform on top of this work, this project’s philosophy and governance model 
+likely do not align with those aims.
 
-If you run this software as a service or expose it over a network, you are
-required to provide the complete corresponding source code of your version.
 
-This project is intended as commons software: local-first, open, and non-extractive.
-## Name and Identity
+## Name and Trademark Policy
 
-"Cognitive Exoskeleton" is the name of this project and refers to this specific open source work.
+The name **Cognitive Exoskeleton** refers specifically to this open source project.
 
-Use of the name "Cognitive Exoskeleton" or derivatives for commercial products,
-services, or rebranded forks requires explicit permission from the original author.
+You are free to fork and modify the code under the terms of the AGPLv3.  
+However, you may not use the name "Cognitive Exoskeleton", or imply endorsement by the original author,
+for derivative works, commercial offerings, or hosted services without explicit permission.
 
-Forks must use a different name.
-## Trademark Policy
+Forks must adopt a distinct name to avoid confusion and preserve the identity of the original project.
 
-The name "Cognitive Exoskeleton" and related identifiers are associated with this project.
 
-You may:
+## Contributing Ethos
 
-- Use the name to refer to the original project.
-- Fork the code under AGPLv3.
+Contributions are welcome from individuals who resonate with the goals of this project.
 
-You may NOT:
+By contributing, you agree that your work remains licensed under the AGPLv3 
+and becomes part of the shared commons.
 
-- Use the name for derivative projects without permission.
-- Imply endorsement by the original author.
-- Use the name for commercial offerings.
+This project intentionally does not prioritize:
 
-Forks must use a distinct name.
+- enterprise integrations
+- cloud platforms
+- proprietary tooling
+- closed-source extensions
+- commercial scalability
 
----
-
-This project emerged organically from building tools to externalize human reflection and learning. It is not an AI agent. It is a cognitive exoskeleton.
+Contributions that introduce vendor lock-in, telemetry, centralized control,
+or proprietary dependencies are unlikely to be accepted.
