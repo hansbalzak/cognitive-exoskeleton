@@ -3,6 +3,10 @@
   <img src="assets/cogex.jpg" width="600">
 </p>
 
+
+# about:
+This project explores human–AI collaborative development.
+It is not AI-generated software; it is AI-assisted software.
 ## Project Principles
 
 Cognitive Exoskeleton is built on principles of autonomy, transparency, and user sovereignty.
