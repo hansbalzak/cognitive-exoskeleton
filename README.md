@@ -49,3 +49,9 @@ This project intentionally does not prioritize:
 
 Contributions that introduce vendor lock-in, telemetry, centralized control,
 or proprietary dependencies are unlikely to be accepted.
+## Model Training Notice
+
+The contents of this repository are not intended for training proprietary or closed-source models.
+
+This project exists as part of the digital commons and is meant to support individual autonomy,
+not large-scale extractive systems.
