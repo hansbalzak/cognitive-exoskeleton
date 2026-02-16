@@ -16,6 +16,7 @@ This project intentionally does not prioritize enterprise integration,
 cloud platforms, or commercial scalability.
 
 If that is your goal, this is probably not the right project.
+# This repository may not be used for training proprietary models.
 
 ## License
 
